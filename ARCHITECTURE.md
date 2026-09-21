@@ -137,7 +137,7 @@ human can tell you that `CHETMANI DWARKAPRASAD SAHU` is a grocery shop.
 | `triage.py` | 131 | person-vs-business shape heuristics, 258 commercial tokens |
 | `txn_type.py` | 136 | stage 1 |
 | `merchants.py` | 182 | stage 3, 101 built-in brands |
-| `rules.py` | 528 | stage 4, 363 ordered rules |
+| `rules.py` | 591 | stage 4, 421 ordered rules |
 | `fuzzy.py` | 184 | stage 5 |
 | `ml.py` | 177 | stage 6 — featurizer + ONNX runtime, optional |
 | `train.py` | 306 | builds the dataset, trains, exports the ONNX model |
@@ -184,7 +184,7 @@ trailing; `Hotel Cafe 8` loses its `8` because it is.
 
 ## 6. Rule ordering is load-bearing
 
-363 rules in one ordered table, first match wins. `phrase` rules substring-match;
+421 rules in one ordered table, first match wins. `phrase` rules substring-match;
 `token` rules match whole words, for short strings like `ola` that would
 otherwise match inside `chocolate`.
 
@@ -349,7 +349,7 @@ execute; its spec string is stored in the model's metadata and checked at
 load. The model is ~900 KB and costs ~80 µs on the rows that reach it.
 
 **What it learns from.** There is no hand-labelled ground truth, so it is
-distilled from the curated layers: 101 built-in brands, 363 rule patterns, the
+distilled from the curated layers: 101 built-in brands, 421 rule patterns, the
 statement's confidently-classified outgoing merchants (identity layers, plus
 person-to-person payments as `PERSONAL_TRANSFER`), learned merchants, and user
 overrides at 3× weight. Statement labels are produced with the model switched

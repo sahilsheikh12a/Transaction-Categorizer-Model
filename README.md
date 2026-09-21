@@ -18,7 +18,7 @@ Jul 2024 – Apr 2026).
 | Fell through to `OTHER` | 91 — 4.5% |
 | Unique merchants | 607 |
 | Speed | ~129 µs per transaction |
-| Tests | 226 passing |
+| Tests | 243 passing |
 
 ## Quick start
 
@@ -144,7 +144,7 @@ raw counterparty
   → transaction-type detection   txn_type.py     person / merchant / received / refund
   → user overrides               db/             highest priority, always
   → exact merchant lookup        merchants.py    ~110 brands + learned merchants
-  → keyword & brand rules        rules.py        361 ordered patterns
+  → keyword & brand rules        rules.py        421 ordered patterns
   → fuzzy merchant matching      fuzzy.py        typos, truncation, branch suffixes
   → ONNX model                   ml.py           only below the review threshold
   → OTHER + needs_review         engine.py       never guesses
@@ -285,7 +285,7 @@ phonepe_categorizer/
   triage.py       person vs business shape heuristics
   txn_type.py     stage 1 — transaction type
   merchants.py    stage 3 — exact directory
-  rules.py        stage 4 — 361 ordered rules
+  rules.py        stage 4 — 421 ordered rules
   fuzzy.py        stage 5 — token-alignment matcher
   ml.py           stage 6 — ONNX model runtime + featurizer
   train.py        trains and exports the stage-6 model
@@ -298,12 +298,12 @@ phonepe_categorizer/
   report.py       evaluation report
   cli.py          command line
   db/             optional SQLAlchemy persistence + correction loop
-tests/            226 tests
+tests/            243 tests
 ```
 
 ## Develop
 
 ```bash
-.venv/bin/python -m pytest        # 226 tests
+.venv/bin/python -m pytest        # 243 tests
 .venv/bin/python -m ruff check .
 ```

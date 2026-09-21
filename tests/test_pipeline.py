@@ -175,6 +175,42 @@ class TestRules:
         assert rules.lookup("") is None
 
 
+class TestBrandStores:
+    """National brand stores. Unlike the rest of this file these strings are
+    not from the shipped statement — they are the shapes a new user's
+    statement brings, which is exactly what the statement-curated rules
+    missed."""
+
+    @pytest.mark.parametrize("merchant,category", [
+        ("Samsung Store", C.SHOPPING),
+        ("Samsung Smart Plaza", C.SHOPPING),
+        ("Realme Store", C.SHOPPING),
+        ("Mi Store", C.SHOPPING),
+        ("Xiaomi", C.SHOPPING),
+        ("Apple Store", C.SHOPPING),
+        ("OnePlus Store", C.SHOPPING),
+        ("One Plus Service Center", C.SHOPPING),
+        ("Lenovo Exclusive Store", C.SHOPPING),
+        ("Nike Store", C.SHOPPING),
+        ("Bata Store", C.SHOPPING),
+        ("Titan World", C.SHOPPING),        # would otherwise read as a person
+        ("Titan Eye Plus", C.HEALTH),       # eyewear, before bare "titan"
+        ("Lenskart", C.HEALTH),
+    ])
+    def test_brand(self, merchant, category):
+        r = _paid(merchant)
+        assert r.category == category
+        assert r.source == C.SRC_RULE
+
+    @pytest.mark.parametrize("merchant", [
+        "Apple Fruit Center",   # a fruit stall, not Apple
+        "Zara Sheikh",          # a person, not the brand
+        "Raymond Dsouza",
+    ])
+    def test_brand_words_that_are_not_brands(self, merchant):
+        assert _paid(merchant).category != C.SHOPPING
+
+
 # ── 5. fuzzy matching ────────────────────────────────────────────────────
 
 class TestFuzzy:
