@@ -4,6 +4,7 @@ __pycache__/
 *.db
 .pytest_cache/
 .ruff_cache/
+phonepe_categorizer/models/minilm/
 
 # Personal financial data: the statement and everything derived from it
 /transactions*.csv

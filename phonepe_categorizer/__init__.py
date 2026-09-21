@@ -18,14 +18,26 @@ The pipeline, in order:
       -> exact merchant lookup
       -> keyword + brand rules
       -> fuzzy merchant matching
-      -> ONNX model                      (only below the review threshold)
-      -> OTHER + needs_review
+      -> ONNX n-gram model               (only below the review threshold)
+      -> MiniLM neighbours               (instead of OTHER; always answers)
+      -> OTHER + needs_review            (only when there is no text at all)
 
 No LLM and no network: the same input always produces the same output.
 Persistence and the user-correction loop are optional and live in
 `phonepe_categorizer.db`.
 """
-from . import categories, fuzzy, importer, merchants, ml, normalize, rules, triage, txn_type
+from . import (
+    categories,
+    fuzzy,
+    importer,
+    merchants,
+    ml,
+    normalize,
+    rules,
+    semantic,
+    triage,
+    txn_type,
+)
 from .categories import ALL as CATEGORIES
 from .engine import REVIEW_THRESHOLD, classify_core
 from .normalize import normalize_merchant
@@ -41,6 +53,6 @@ __all__ = [
     "classify", "classify_core", "ClassifyResult", "TxnType",
     "CATEGORIES", "REVIEW_THRESHOLD", "normalize_merchant",
     "categories", "normalize", "triage", "txn_type", "rules",
-    "merchants", "fuzzy", "ml", "importer",
+    "merchants", "fuzzy", "ml", "semantic", "importer",
     "__version__",
 ]
