@@ -32,6 +32,8 @@ accuracy against reality.
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -40,6 +42,7 @@ from . import categories as C
 from . import merchants as _merchants
 from . import ml as _ml
 from . import rules as _rules
+from . import semantic as _semantic
 from .engine import REVIEW_THRESHOLD, classify_core
 from .importer import parse_file
 from .normalize import normalize_merchant
@@ -80,6 +83,7 @@ class TrainReport:
     resolved_by_label: dict[str, int] = field(default_factory=dict)
     samples: list[tuple[str, str, float]] = field(default_factory=list)
     output: str = ""
+    semantic_index: int = 0
 
     def as_text(self) -> str:
         lines = [
@@ -103,10 +107,19 @@ class TrainReport:
             lines += [f"    {p:.2f}  {lab:<20} {text}" for text, lab, p in self.samples]
         if self.output:
             lines += ["", f"model written to {self.output}"]
+        if self.semantic_index:
+            lines += [f"MiniLM index rebuilt with {self.semantic_index} merchants"]
         return "\n".join(lines)
 
 
 # ── dataset ──────────────────────────────────────────────────────────────
+
+@contextmanager
+def _curated_only() -> Iterator[None]:
+    """Both model layers off: labels must come from the curated layers alone."""
+    with _ml.disabled(), _semantic.disabled():
+        yield
+
 
 def _statement_label(res) -> str | None:
     if res.needs_review:
@@ -133,7 +146,7 @@ def build_dataset(
     by_origin["learned"].update(learned or {})
     by_origin["override"].update(overrides or {})
 
-    with _ml.disabled():
+    with _curated_only():
         for path in statements:
             for txn in parse_file(path).rows:
                 if txn.is_credit:
@@ -156,7 +169,7 @@ def build_dataset(
 def _fallback_rows(statements: list[Path], learned: dict[str, str] | None = None):
     """Outgoing rows the curated layers leave to the fallback — stage 6's input."""
     out = []
-    with _ml.disabled():
+    with _curated_only():
         for path in statements:
             for txn in parse_file(path).rows:
                 if txn.is_credit:
@@ -287,7 +300,7 @@ def train(
     rows = _fallback_rows(statements, learned)
     report.unresolved_rows = len(rows)
     seen: dict[str, tuple[str, float]] = {}
-    with _ml.disabled():
+    with _curated_only():
         _ml.set_default_model(model)
         for txn in rows:
             res = classify_core(txn.counterparty, direction=txn.direction, learned=learned)
@@ -300,7 +313,20 @@ def train(
             seen[res.normalized_merchant] = (res.category, res.confidence)
     report.samples = sorted(((t, lab, p) for t, (lab, p) in seen.items()),
                             key=lambda s: -s[2])[:25]
+
+    if _semantic.is_installed():
+        report.semantic_index = build_semantic_index(examples)
     return report
 
 
-__all__ = ["train", "build_dataset", "cross_validate", "Example", "TrainReport", "DEFAULT_C"]
+def build_semantic_index(examples: list[Example]) -> int:
+    """Rebuild stage 7's neighbour index from the same labelled merchants."""
+    n = _semantic.build_index([e.text for e in examples], [e.label for e in examples])
+    _semantic.reset_default_model()
+    return n
+
+
+__all__ = [
+    "train", "build_dataset", "build_semantic_index", "cross_validate",
+    "Example", "TrainReport", "DEFAULT_C",
+]

@@ -11,6 +11,7 @@
     python -m phonepe_categorizer rule      kirana GROCERIES --kind token
     python -m phonepe_categorizer reclassify
     python -m phonepe_categorizer train     transactions2.csv
+    python -m phonepe_categorizer setup-minilm transactions2.csv
 
 `report` and `classify` are stateless. Everything else reads and writes the
 SQLite file given by --db, which is where overrides and learned merchants live.
@@ -191,6 +192,26 @@ def cmd_train(args) -> int:
     return 0
 
 
+def cmd_setup_minilm(args) -> int:
+    from . import semantic
+    from .train import build_dataset, build_semantic_index
+
+    print(f"fetching {semantic.REPO} into {semantic.MODEL_DIR}")
+    try:
+        semantic.fetch()
+    except (OSError, RuntimeError) as exc:
+        print(f"error: {exc}")
+        return 2
+    overrides = learned = None
+    if args.db and Path(args.db).exists():
+        with open_session(_url(args.db)) as s:
+            repo = CategorizerRepository(s)
+            overrides, learned = repo.overrides(), repo.learned_merchants()
+    examples = build_dataset([Path(p) for p in args.csv], overrides=overrides, learned=learned)
+    print(f"MiniLM index built with {build_semantic_index(examples)} merchants")
+    return 0
+
+
 def cmd_serve(args) -> int:
     from .web import serve
     return serve(host=args.host, port=args.port, db=None if args.no_db else args.db)
@@ -278,6 +299,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("-o", "--output", help="defaults to the shipped model path")
     p.add_argument("--c", type=float, default=10.0, help="inverse regularization strength")
     p.set_defaults(func=cmd_train)
+
+    p = sub.add_parser("setup-minilm",
+                       help="download MiniLM (~90 MB) and build the stage-7 index")
+    p.add_argument("csv", nargs="*", help="statements whose merchants seed the index")
+    p.add_argument("--db", default=DEFAULT_DB,
+                   help="also index this DB's corrections and merchants if it exists")
+    p.set_defaults(func=cmd_setup_minilm)
 
     p = sub.add_parser("serve", help="run the local browser UI")
     p.add_argument("--host", default="127.0.0.1")

@@ -43,6 +43,15 @@ if [ requirements.txt -nt .venv ]; then
   touch .venv
 fi
 
+# MiniLM (stage 7) is ~90 MB and not in git. Fetch it once; if that fails
+# (offline), the layer stays off and the app still runs.
+if [ ! -f phonepe_categorizer/models/minilm/index.npz ]; then
+  echo "[setup] fetching MiniLM for the last-resort layer (~90 MB, once)…"
+  SEED=(); [ -f transactions2.csv ] && SEED=(transactions2.csv)
+  "$PY" -m phonepe_categorizer setup-minilm ${SEED+"${SEED[@]}"} \
+    || echo "[setup] MiniLM unavailable — continuing without it"
+fi
+
 # ── --check: tests + lint, then exit ─────────────────────────────────────
 if [ "$CHECK" -eq 1 ]; then
   echo "[check] pytest"
