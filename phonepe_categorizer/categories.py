@@ -36,6 +36,7 @@ HEALTH: Final = "HEALTH"
 ENTERTAINMENT: Final = "ENTERTAINMENT"
 TRAVEL: Final = "TRAVEL"
 FINANCE: Final = "FINANCE"
+EDUCATION: Final = "EDUCATION"
 PERSONAL_TRANSFER: Final = "PERSONAL_TRANSFER"
 INCOME: Final = "INCOME"
 OTHER: Final = "OTHER"
@@ -51,6 +52,7 @@ ALL: Final[tuple[str, ...]] = (
     ENTERTAINMENT,
     TRAVEL,
     FINANCE,
+    EDUCATION,
     PERSONAL_TRANSFER,
     INCOME,
     OTHER,
@@ -78,6 +80,8 @@ DEFINITIONS: Final[dict[str, str]] = {
                    "sports and recreation venues.",
     TRAVEL: "Airlines, hotels and lodging, tour operators, travel bookings.",
     FINANCE: "Bank and payment charges, insurance premiums, loan repayments, investments.",
+    EDUCATION: "College, school and university fees, coaching classes and tuition, "
+               "online courses and exam fees.",
     PERSONAL_TRANSFER: "Money moved to or from an individual — friends, family, or a "
                        "person-to-person UPI transfer.",
     INCOME: "Money received from a business, employer, or institution, plus refunds "
@@ -124,6 +128,7 @@ _TO_LEGACY: Final[dict[str, str]] = {
     ENTERTAINMENT: "ent",
     TRAVEL: "transport",
     FINANCE: "bills",
+    EDUCATION: "edu",
     PERSONAL_TRANSFER: "contact",
     INCOME: "income",
     OTHER: "Other",
@@ -172,16 +177,15 @@ _FROM_LEGACY: Final[dict[str, str]] = {
     "transfer": PERSONAL_TRANSFER,
     "income": INCOME,
     "other": OTHER,
-    # `edu` has no canonical home in V1 — see the evaluation report's
-    # recommendation to add an EDUCATION category.
-    "edu": OTHER,
+    "edu": EDUCATION,
+    "education": EDUCATION,
 }
 
 
 __all__ = [
     "GROCERIES", "FOOD_AND_DINING", "SHOPPING", "BILLS_AND_UTILITIES",
     "MOBILE_AND_INTERNET", "TRANSPORT", "HEALTH", "ENTERTAINMENT", "TRAVEL",
-    "FINANCE", "PERSONAL_TRANSFER", "INCOME", "OTHER",
+    "FINANCE", "EDUCATION", "PERSONAL_TRANSFER", "INCOME", "OTHER",
     "ALL", "VALID", "DEFINITIONS",
     "SRC_USER_OVERRIDE", "SRC_EXACT_MERCHANT", "SRC_RULE", "SRC_FUZZY_MATCH",
     "SRC_TXN_TYPE", "SRC_ML_MODEL", "SRC_SEMANTIC", "SRC_FALLBACK", "SOURCES",

@@ -14,12 +14,12 @@ Jul 2024 – Apr 2026).
 | | |
 |---|---|
 | Transactions parsed | **2,005** of 2,009 (2 duplicates collapsed, 2 blank rows skipped) |
-| Classified automatically | **1,811 — 90.3%** (7 by the n-gram model, 3 by MiniLM) |
-| Flagged for review | 194 — 9.7% (every one still carries a category) |
+| Classified automatically | **1,821 — 90.8%** (5 by the n-gram model, 4 by MiniLM) |
+| Flagged for review | 184 — 9.2% (every one still carries a category) |
 | Fell through to `OTHER` | **0** (was 91 before the model layers) |
 | Unique merchants | 607 |
 | Speed | ~280 µs per transaction on average; MiniLM rows ~3 ms each |
-| Tests | 261 passing |
+| Tests | 274 passing |
 
 ## Quick start
 
@@ -145,7 +145,7 @@ raw counterparty
   → transaction-type detection   txn_type.py     person / merchant / received / refund
   → user overrides               db/             highest priority, always
   → exact merchant lookup        merchants.py    ~110 brands + learned merchants
-  → keyword & brand rules        rules.py        421 ordered patterns
+  → keyword & brand rules        rules.py        461 ordered patterns
   → fuzzy merchant matching      fuzzy.py        typos, truncation, branch suffixes
   → ONNX n-gram model            ml.py           only below the review threshold
   → MiniLM neighbours            semantic.py     instead of OTHER, always answers
@@ -200,11 +200,10 @@ corrections:
 `PHONEPE_CATEGORIZER_ML=off` to run without the n-gram model. If onnxruntime is missing or
 the model file is absent, the layer switches itself off.
 
-**What it does and doesn't buy.** It resolves 7 of the 201 rows that reach it
-on this statement — plain first names (`raju`, `rupesh`) as transfers, plus one
-dubious `sweety` → FOOD. The rest are unresolvable from the text by any
-model: a college (no EDUCATION category), person-named shops, and bare
-`… traders` / `… enterprises`. Cross-validation shows 99% agreement with the
+**What it does and doesn't buy.** It resolves 5 of the rows that reach it on
+this statement, all plain first names (`raju`, `rupesh`, `kamlesh`,
+`shubham`) as transfers. Text alone can't place the rest: person-named shops
+and bare `… traders` / `… enterprises`. Cross-validation shows 99% agreement with the
 curated layers when it clears 0.75, but that measures agreement with the rules,
 not correctness — there is still no hand-labelled ground truth.
 
@@ -224,13 +223,13 @@ shows why:
 
 ```
 SHOPPING  0.80        minilm: nearest 'textiles' (0.64), 82% of vote
-TRANSPORT 0.20 ⚠      minilm: nearest 'health institute' (0.35), 58% of vote
+HEALTH    0.36 ⚠      minilm: nearest 'hcg nagpur' (0.64), 57% of vote
 ```
 
-On this statement it answers 90 rows. 3 are clear and correct (`akhtar
-textile` → SHOPPING, `sonu chat` → FOOD, a person's full name → transfer). The
-other 87 are flagged guesses, and most are wrong: the college lands on
-TRANSPORT, `smart point` (a grocery) on HEALTH. The text alone doesn't say
+On this statement it answers 78 rows. 4 are clear and correct (`akhtar
+textile` → SHOPPING, `sonu chat` ×2 → FOOD, a person's full name → transfer).
+The other 74 are flagged guesses, and most are wrong: `smart point` (a
+grocery) lands on HEALTH, `industrial explosives` on HEALTH. The text alone doesn't say
 what these merchants are. Your corrections do, and `train` feeds them into
 the index.
 
@@ -245,12 +244,12 @@ switches itself off.
 
 ## Categories
 
-13, defined in one place (`categories.py`) so they can be changed without
+14, defined in one place (`categories.py`) so they can be changed without
 touching the rules:
 
 `GROCERIES` · `FOOD_AND_DINING` · `SHOPPING` · `BILLS_AND_UTILITIES` ·
 `MOBILE_AND_INTERNET` · `TRANSPORT` · `HEALTH` · `ENTERTAINMENT` · `TRAVEL` ·
-`FINANCE` · `PERSONAL_TRANSFER` · `INCOME` · `OTHER`
+`FINANCE` · `EDUCATION` · `PERSONAL_TRANSFER` · `INCOME` · `OTHER`
 
 `OTHER` always pairs with `needs_review=True` — it means "could not tell", never
 "miscellaneous".
@@ -306,9 +305,6 @@ plain dicts and never touches a database.
 
 ## Known limits
 
-- **No `EDUCATION` category.** ₹144,350 of college fees lands in `OTHER`. This is
-  the biggest single gap; adding a 14th category is a `categories.py` edit plus a
-  few rules.
 - **Person-named vendors.** `swapna lava gotivada` takes 85 payments at a ₹30
   median — a shop, not a friend. Deterministic rules cannot resolve this from the
   string alone; the report flags them and one correction each fixes it.
@@ -326,7 +322,7 @@ phonepe_categorizer/
   triage.py       person vs business shape heuristics
   txn_type.py     stage 1 — transaction type
   merchants.py    stage 3 — exact directory
-  rules.py        stage 4 — 421 ordered rules
+  rules.py        stage 4 — 461 ordered rules
   fuzzy.py        stage 5 — token-alignment matcher
   ml.py           stage 6 — ONNX model runtime + featurizer
   semantic.py     stage 7 — MiniLM embeddings, neighbour vote, setup
@@ -340,12 +336,12 @@ phonepe_categorizer/
   report.py       evaluation report
   cli.py          command line
   db/             optional SQLAlchemy persistence + correction loop
-tests/            261 tests
+tests/            274 tests
 ```
 
 ## Develop
 
 ```bash
-.venv/bin/python -m pytest        # 261 tests
+.venv/bin/python -m pytest        # 274 tests
 .venv/bin/python -m ruff check .
 ```

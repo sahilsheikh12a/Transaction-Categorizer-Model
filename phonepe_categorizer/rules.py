@@ -54,6 +54,18 @@ AMBIGUOUS_PHRASES: tuple[str, ...] = (
 
 RULES: tuple[Rule, ...] = (
     # ══════════════════════════════════════════════════════════════════
+    # EDUCATION, the colleges whose name contains a HEALTH word. Must
+    # precede "medical" / "dental" / "nursing" / "ayurvedic" below. The rest
+    # of EDUCATION is at the very end of the table.
+    # ══════════════════════════════════════════════════════════════════
+    _p("medical college", C.EDUCATION),
+    _p("dental college", C.EDUCATION),
+    _p("nursing college", C.EDUCATION),
+    _p("ayurvedic college", C.EDUCATION),
+    _p("pharmacy college", C.EDUCATION),
+    _p("college of pharmacy", C.EDUCATION),
+
+    # ══════════════════════════════════════════════════════════════════
     # HEALTH — before groceries, because "<name> MEDICAL AND GENERAL STORES"
     # is a pharmacy, not a kirana.
     # ══════════════════════════════════════════════════════════════════
@@ -528,6 +540,48 @@ RULES: tuple[Rule, ...] = (
     _p("credit card payment", C.FINANCE),
     _p("bajaj finance", C.FINANCE),
     _p("bajaj finserv", C.FINANCE),
+
+    # ══════════════════════════════════════════════════════════════════
+    # EDUCATION — deliberately LAST. Merchant names carry addresses
+    # ("Sharma Kirana College Road", "Juice Centre School Square"), so every
+    # other keyword must get the first chance; these fire only when nothing
+    # else in the string says what the business is. "health institute" is
+    # HEALTH for the same reason: the HEALTH block has already claimed it.
+    # ══════════════════════════════════════════════════════════════════
+    _p("exam fee", C.EDUCATION),
+    _p("examination fee", C.EDUCATION),
+    _p("admission fee", C.EDUCATION),
+    _p("tuition fee", C.EDUCATION),
+    _p("physics wallah", C.EDUCATION),
+    _t("physicswallah", C.EDUCATION),
+    _t("byjus", C.EDUCATION),
+    _t("byju", C.EDUCATION),
+    _t("unacademy", C.EDUCATION),
+    _t("vedantu", C.EDUCATION),
+    _t("udemy", C.EDUCATION),
+    _t("coursera", C.EDUCATION),
+    _t("upgrad", C.EDUCATION),
+    _t("simplilearn", C.EDUCATION),
+    _t("fiitjee", C.EDUCATION),
+    _p("allen career", C.EDUCATION),
+    _t("university", C.EDUCATION),
+    _t("college", C.EDUCATION),
+    _t("colleges", C.EDUCATION),
+    _t("school", C.EDUCATION),
+    _t("schools", C.EDUCATION),
+    _t("vidyalaya", C.EDUCATION),
+    _t("vidyalay", C.EDUCATION),
+    _t("mahavidyalaya", C.EDUCATION),
+    _t("vidyapeeth", C.EDUCATION),
+    _t("convent", C.EDUCATION),
+    _t("polytechnic", C.EDUCATION),
+    _t("academy", C.EDUCATION),
+    _t("institute", C.EDUCATION),
+    _t("coaching", C.EDUCATION),
+    _t("tuition", C.EDUCATION),
+    _t("tuitions", C.EDUCATION),
+    _t("tutorials", C.EDUCATION),
+    _t("classes", C.EDUCATION),
 )
 
 

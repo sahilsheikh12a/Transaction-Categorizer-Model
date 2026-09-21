@@ -142,12 +142,12 @@ human can tell you that `CHETMANI DWARKAPRASAD SAHU` is a grocery shop.
 
 | Module | Lines | Role |
 |---|---:|---|
-| `categories.py` | 187 | 13 categories, definitions, source constants, legacy bridge |
+| `categories.py` | 193 | 14 categories, definitions, source constants, legacy bridge |
 | `normalize.py` | 162 | two normalizers — storage key and matching key |
 | `triage.py` | 131 | person-vs-business shape heuristics, 258 commercial tokens |
 | `txn_type.py` | 136 | stage 1 |
 | `merchants.py` | 182 | stage 3, 101 built-in brands |
-| `rules.py` | 591 | stage 4, 421 ordered rules |
+| `rules.py` | 645 | stage 4, 461 ordered rules |
 | `fuzzy.py` | 184 | stage 5 |
 | `ml.py` | 177 | stage 6 — featurizer + ONNX runtime, optional |
 | `semantic.py` | 234 | stage 7 — MiniLM embeddings, neighbour vote, fetch/index |
@@ -195,7 +195,7 @@ trailing; `Hotel Cafe 8` loses its `8` because it is.
 
 ## 6. Rule ordering is load-bearing
 
-421 rules in one ordered table, first match wins. `phrase` rules substring-match;
+461 rules in one ordered table, first match wins. `phrase` rules substring-match;
 `token` rules match whole words, for short strings like `ola` that would
 otherwise match inside `chocolate`.
 
@@ -217,6 +217,13 @@ because normalization has already removed `private limited`.
 Some phrases are listed as **ambiguous** (`internet cafe`, `cyber cafe`) and
 force a fall-through to `OTHER` rather than matching `cafe` → FOOD. Abstaining
 is a valid answer.
+
+EDUCATION shows the same principle from the other side. "medical college" has
+to sit at the **top** of the table, or `medical` → HEALTH claims it. Every
+other education word (`college`, `school`, `academy`, `institute`,
+`classes`…) sits at the very **end**, because merchant names carry addresses:
+`Sharma Kirana College Road` is a kirana, and the education rule only fires
+when no other keyword in the string says what the business is.
 
 ---
 
@@ -253,7 +260,7 @@ whose job is catching typos, not doing the work.
 
 ```python
 ClassifyResult(
-    category='GROCERIES',              # one of 13
+    category='GROCERIES',              # one of 14
     confidence=0.90,
     source='RULE',                     # which layer decided
     needs_review=False,
@@ -320,25 +327,23 @@ merchant.
 | | |
 |---|---:|
 | Transactions | 2,005 |
-| Auto-classified | **1,811 — 90.3%** |
-| Flagged for review | 194 — 9.7% |
+| Auto-classified | **1,821 — 90.8%** |
+| Flagged for review | 184 — 9.2% |
 | `OTHER` | 0 |
 | Speed | ~280 µs/txn average, ~3 ms on a MiniLM row |
 
-By deciding layer: `TXN_TYPE` 971 · `RULE` 634 · `EXACT_MERCHANT` 196 ·
-`FALLBACK` 104 · `SEMANTIC` 90 · `ML_MODEL` 7 · `FUZZY_MATCH` 3.
+By deciding layer: `TXN_TYPE` 969 · `RULE` 648 · `EXACT_MERCHANT` 196 ·
+`FALLBACK` 106 · `SEMANTIC` 78 · `ML_MODEL` 5 · `FUZZY_MATCH` 3.
 
-**90.3% is coverage, not accuracy.** It means 1,811 transactions got a confident
-answer, not that 1,811 are correct. `OTHER` at 0 doesn't mean every row is
-categorized correctly. It means every row carries a best guess, and 194 of
+**90.8% is coverage, not accuracy.** It means 1,821 transactions got a confident
+answer, not that 1,821 are correct. `OTHER` at 0 doesn't mean every row is
+categorized correctly. It means every row carries a best guess, and 184 of
 those guesses are still marked for review. There is no labelled ground truth for this
 statement, so precision is unmeasured. The report's suspicious-classification
 sections exist precisely because of that gap.
 
 Known limits:
 
-- **No `EDUCATION` category.** ₹144,350 of college fees sits in `OTHER`. The
-  largest single gap; a `categories.py` edit plus two rules.
 - **Person-named vendors.** Unlearnable from the string. The report flags them
   by behaviour (many payments, small median); one correction each fixes it.
 - **Incoming money from a person is `PERSONAL_TRANSFER`, not `INCOME`** — by
@@ -364,7 +369,7 @@ execute; its spec string is stored in the model's metadata and checked at
 load. The model is ~900 KB and costs ~80 µs on the rows that reach it.
 
 **What it learns from.** There is no hand-labelled ground truth, so it is
-distilled from the curated layers: 101 built-in brands, 421 rule patterns, the
+distilled from the curated layers: 101 built-in brands, 461 rule patterns, the
 statement's confidently-classified outgoing merchants (identity layers, plus
 person-to-person payments as `PERSONAL_TRANSFER`), learned merchants, and user
 overrides at 3× weight. Statement labels are produced with the model switched
@@ -390,12 +395,12 @@ bet is that it generalizes their spelling patterns to strings no rule matches.
 agreement with the curated layers on the 57% of held-out merchants it clears
 0.75 on. That number flatters it, because held-out merchants usually still
 contain a keyword the training set has. On the 201 rows that actually reach
-stage 6 it resolves **7**: `raju`, `rupesh`, `kamlesh`, `shubham` as transfers
-(plausible) and `sweety` → FOOD (probably a person; wrong). Its sub-threshold
-guesses on the rest are mostly wrong — the college is "FOOD_AND_DINING, 0.49".
-The residual is not a spelling problem: a college with no EDUCATION category,
-shops wearing people's names, and bare `… traders` / `… enterprises`. No
-text-only model fixes those.
+stage 6 it resolves **5** (after the EDUCATION retrain): `raju`, `rupesh`,
+`kamlesh`, `shubham` ×2, all as transfers. An earlier training run also let
+through `sweety` → FOOD, probably a person, so its output shifts from one
+retrain to the next. Most of its guesses below 0.75 on the other rows are
+wrong. The residual is not a spelling problem: shops wearing people's names,
+and bare `… traders` / `… enterprises`. No text-only model fixes those.
 
 **Where real gains would come from.** The human labels in
 `merchant_overrides`. The review queue is an unlabelled pool ranked by spend,
@@ -418,8 +423,9 @@ It always answers. It clears review only when the winner has ≥ 80% of the
 vote **and** the nearest neighbour is at ≥ 0.50 similarity. Leave-one-out on
 statement merchants: 89% agreement overall, 98% at ≥ 80% vote share. The same
 caveat applies as for stage 6: that measures agreement with the rules. On the
-91 rows that used to be `OTHER` it clears 3, all correct, and flags 87 guesses
-that are mostly wrong (college → TRANSPORT, a grocery → HEALTH). A sentence
+78 rows that reach it (after EDUCATION took the college fees) it clears 4, all
+correct, and flags 74 guesses that are mostly wrong (a grocery → HEALTH,
+`industrial explosives` → HEALTH). A sentence
 model knows English meaning, not that `smart point nagpur` is a kirana. The
 guards match stage 6: no `PERSONAL_TRANSFER` for a commercial name, and
 ambiguous phrases are always flagged.

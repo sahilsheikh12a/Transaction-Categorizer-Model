@@ -211,6 +211,35 @@ class TestBrandStores:
         assert _paid(merchant).category != C.SHOPPING
 
 
+class TestEducation:
+    @pytest.mark.parametrize("merchant", [
+        "St Vincent Pallotti College of Engineering And Tec",   # from the statement
+        "Neso Academy Private Limited",                         # from the statement
+        "Rustomjee Academy for Global Careers",                 # from the statement
+        "Udemy India LLP",                                      # from the statement
+        "Government Medical College Nagpur",
+        "Ramesh Coaching Classes",
+        "Kendriya Vidyalaya",
+    ])
+    def test_education(self, merchant):
+        assert _paid(merchant).category == C.EDUCATION
+
+    @pytest.mark.parametrize("merchant,category", [
+        # An address fragment must not beat what the business actually is.
+        ("Sharma Kirana College Road", C.GROCERIES),
+        ("Shree Juice Centre School Square", C.FOOD_AND_DINING),
+        ("College Canteen", C.FOOD_AND_DINING),
+        ("Mental Health Institute", C.HEALTH),
+        ("Allen Solly", C.SHOPPING),
+    ])
+    def test_education_words_lose_to_the_business(self, merchant, category):
+        assert _paid(merchant).category == category
+
+    def test_legacy_edu_maps_to_education(self):
+        assert C.coerce("edu") == C.EDUCATION
+        assert C.to_legacy(C.EDUCATION) == "edu"
+
+
 # ── 5. fuzzy matching ────────────────────────────────────────────────────
 
 class TestFuzzy:
