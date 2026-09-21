@@ -84,18 +84,13 @@ nothing in the string says so.
                                   └─────────┬──────────┘  or ambiguous)
                                             │ unsure: kept as a hint
                                   ┌─────────▼──────────┐
-                                  │ masked / mobile no │ stage 8 (part)
+                                  │ masked / mobile no │ stage 7
                                   │ short name         │ flagged transfers
                                   └─────────┬──────────┘
                                             │ none of those
                                   ┌─────────▼──────────┐
-                                  │ MiniLM neighbours  │ stage 7  semantic.py
-                                  │ always answers     │ flagged unless the
-                                  └─────────┬──────────┘ vote is clear
-                                            │ no text / not installed
-                                  ┌─────────▼──────────┐
-                                  │ OTHER              │ stage 8
-                                  │ needs_review=True  │
+                                  │ OTHER              │ + MiniLM suggestion
+                                  │ needs_review=True  │   in the evidence
                                   └────────────────────┘
 ```
 
@@ -147,10 +142,10 @@ human can tell you that `CHETMANI DWARKAPRASAD SAHU` is a grocery shop.
 | `triage.py` | 131 | person-vs-business shape heuristics, 258 commercial tokens |
 | `txn_type.py` | 136 | stage 1 |
 | `merchants.py` | 182 | stage 3, 101 built-in brands |
-| `rules.py` | 645 | stage 4, 461 ordered rules |
+| `rules.py` | 664 | stage 4, 479 ordered rules |
 | `fuzzy.py` | 184 | stage 5 |
 | `ml.py` | 177 | stage 6 — featurizer + ONNX runtime, optional |
-| `semantic.py` | 234 | stage 7 — MiniLM embeddings, neighbour vote, fetch/index |
+| `semantic.py` | 220 | MiniLM embeddings and neighbour vote (hint only), fetch/index |
 | `train.py` | 332 | builds the dataset, trains, exports the ONNX model, rebuilds the MiniLM index |
 | `engine.py` | 226 | the orchestrator |
 | `schema.py` | 70 | `ClassifyResult` |
@@ -195,7 +190,7 @@ trailing; `Hotel Cafe 8` loses its `8` because it is.
 
 ## 6. Rule ordering is load-bearing
 
-461 rules in one ordered table, first match wins. `phrase` rules substring-match;
+479 rules in one ordered table, first match wins. `phrase` rules substring-match;
 `token` rules match whole words, for short strings like `ola` that would
 otherwise match inside `chocolate`.
 
@@ -207,11 +202,10 @@ Specific patterns must precede generic ones. Real cases from this statement:
 | `ISHANT DAIRY AND ICECREAM PARLOUR` | `icecream` → FOOD | `dairy` → GROCERIES | you eat there |
 | `Shree Ganesh Book Depot … General Sto` | `book depot` → SHOPPING | `general` → GROCERIES | head noun wins |
 | `Roshan Mobile and Repairing Centre` | `mobile and repairing` → SHOPPING | `recharge` → MOBILE | a repair shop |
-| `A U K HOTELS PRIVATE LIMITED` | `hotels private` → TRAVEL | `hotel` → FOOD | corporate = lodging |
-| `Aapna hotel` | `hotel` → FOOD | — | a standalone Indian "hotel" is an eatery |
+| `Aapna hotel`, `A U K HOTELS PRIVATE LIMITED` | `hotel` → FOOD | — | in India every "hotel" is an eatery; stays go through travel brands |
 
 Phrase rules match against **two** haystacks: the normalized string and a
-corporate-preserving one. Without the second, `hotels private` can never fire,
+corporate-preserving one. Without the second, `gas limited` can never fire,
 because normalization has already removed `private limited`.
 
 Some phrases are listed as **ambiguous** (`internet cafe`, `cyber cafe`) and
@@ -286,7 +280,6 @@ Confidences are **ordered preferences, not calibrated probabilities**:
 | `FUZZY_MATCH` | ≤0.94 | looks like something known |
 | `TXN_TYPE` | 0.60–0.99 | decided by flow, not merchant |
 | `ML_MODEL` | 0.75–0.89 | the model's probability, capped below `RULE` |
-| `SEMANTIC` | 0.00–0.80 | MiniLM neighbour vote; 0.80 only when clear, else ≤0.70 and flagged |
 | `FALLBACK` | 0.00–0.70 | a guess or a refusal |
 
 Anything below 0.75 sets `needs_review`.
@@ -314,8 +307,7 @@ a garage was `INCOME`, because a refund came from it — and since the directory
 doubles as the fuzzy corpus, that error spread. The guard cut learned merchants
 from 497 to 178, all genuine, and made `reclassify` a no-op immediately after
 import instead of changing 260 categories. `ML_MODEL` is outside the guard for
-the same reason, and so is `SEMANTIC`: a model's guess is not a fact about a
-merchant.
+the same reason: a model's guess is not a fact about a merchant.
 
 `raw_counterparty` is **never** overwritten. Everything else is derived, so
 `reclassify` can always rebuild from the original text.
@@ -327,18 +319,23 @@ merchant.
 | | |
 |---|---:|
 | Transactions | 2,005 |
-| Auto-classified | **1,821 — 90.8%** |
-| Flagged for review | 184 — 9.2% |
-| `OTHER` | 0 |
-| Speed | ~280 µs/txn average, ~3 ms on a MiniLM row |
+| Auto-classified | **1,848 — 92.2%** |
+| Flagged for review | 157 — 7.8% |
+| `OTHER` | 47 — 2.3% |
+| Speed | ~150 µs/txn average, ~3 ms on a row that ends as OTHER |
 
-By deciding layer: `TXN_TYPE` 969 · `RULE` 648 · `EXACT_MERCHANT` 196 ·
-`FALLBACK` 106 · `SEMANTIC` 78 · `ML_MODEL` 5 · `FUZZY_MATCH` 3.
+By deciding layer: `TXN_TYPE` 967 · `RULE` 683 · `EXACT_MERCHANT` 196 ·
+`FALLBACK` 153 · `ML_MODEL` 3 · `FUZZY_MATCH` 3.
 
-**90.8% is coverage, not accuracy.** It means 1,821 transactions got a confident
-answer, not that 1,821 are correct. `OTHER` at 0 doesn't mean every row is
-categorized correctly. It means every row carries a best guess, and 184 of
-those guesses are still marked for review. There is no labelled ground truth for this
+**92.2% is coverage, not accuracy.** It means 1,848 transactions got a confident
+answer, not that 1,848 are correct.
+
+**Accuracy on a held-out statement.** Jun–Sep 2026 (363 rows, 69 of 111
+merchants never seen in training), hand-labelled blind, scored with
+`evaluate`. The committed system scored 78.0% (81.3% when not flagged, 60
+silent errors). The fixes it prompted brought that to 96.1% (96.6%, 10 silent
+errors), but because they were found by reading that statement, 96% overstates
+real accuracy; the next unseen statement is the honest test. There is no labelled ground truth for this
 statement, so precision is unmeasured. The report's suspicious-classification
 sections exist precisely because of that gap.
 
@@ -369,7 +366,7 @@ execute; its spec string is stored in the model's metadata and checked at
 load. The model is ~900 KB and costs ~80 µs on the rows that reach it.
 
 **What it learns from.** There is no hand-labelled ground truth, so it is
-distilled from the curated layers: 101 built-in brands, 461 rule patterns, the
+distilled from the curated layers: 101 built-in brands, 479 rule patterns, the
 statement's confidently-classified outgoing merchants (identity layers, plus
 person-to-person payments as `PERSONAL_TRANSFER`), learned merchants, and user
 overrides at 3× weight. Statement labels are produced with the model switched
@@ -409,23 +406,17 @@ the classifier got wrong so frequently-corrected *rules* can be fixed directly.
 Retrain after a batch of corrections; measure against those corrections, not
 against the rules.
 
-### Stage 7: MiniLM, the last resort
+### MiniLM: from last resort to hint
 
-Added so the system never gives up with `OTHER`. all-MiniLM-L6-v2 (ONNX,
-pinned to revision `1110a24`, sha256-verified, ~90 MB, fetched by
-`setup-minilm` and kept out of git) embeds the merchant; the 5 nearest of the
-same labelled merchants the n-gram model trains on vote, weighted by cosine
-similarity. It runs only on rows about to become `OTHER`. Masked handles,
-mobile numbers and short names already get a flagged `PERSONAL_TRANSFER`
-first.
+It was added so the system would never give up with `OTHER`: all-MiniLM-L6-v2
+(ONNX, pinned to revision `1110a24`, sha256-verified, ~90 MB, fetched by
+`setup-minilm` and kept out of git) embeds the merchant, and the 5 nearest of
+the same labelled merchants the n-gram model trains on vote, weighted by
+cosine similarity.
 
-It always answers. It clears review only when the winner has ≥ 80% of the
-vote **and** the nearest neighbour is at ≥ 0.50 similarity. Leave-one-out on
-statement merchants: 89% agreement overall, 98% at ≥ 80% vote share. The same
-caveat applies as for stage 6: that measures agreement with the rules. On the
-78 rows that reach it (after EDUCATION took the college fees) it clears 4, all
-correct, and flags 74 guesses that are mostly wrong (a grocery → HEALTH,
-`industrial explosives` → HEALTH). A sentence
-model knows English meaning, not that `smart point nagpur` is a kirana. The
-guards match stage 6: no `PERSONAL_TRANSFER` for a commercial name, and
-ambiguous phrases are always flagged.
+Evaluated against the hand-labelled Jun–Sep 2026 statement, it got 1 of the
+40 rows it decided right and cost about 10 points of accuracy, nearly all by
+replacing a correct `OTHER` (e.g. `Google Asia Pacific`) with a wrong guess.
+It is now a hint: rows that end as `OTHER` stay `OTHER` and flagged, with
+its suggestion in the evidence for the reviewer. Its guard still applies:
+never suggest `PERSONAL_TRANSFER` for a commercial name.

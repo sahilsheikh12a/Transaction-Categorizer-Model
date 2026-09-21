@@ -3,7 +3,7 @@
 Deterministic, offline categorization of PhonePe statement transactions into a
 small set of day-to-day expense categories. No LLM and no network at run
 time: five hand-curated layers, then two ONNX models that only see what those
-could not place: a small n-gram classifier, then MiniLM as the last resort. The
+could not place: a small n-gram classifier, then MiniLM as a reviewer's hint. The
 same input always produces the same output.
 
 Built and evaluated against a real 2,009-row statement (`transactions2.csv`,
@@ -14,12 +14,12 @@ Jul 2024 – Apr 2026).
 | | |
 |---|---|
 | Transactions parsed | **2,005** of 2,009 (2 duplicates collapsed, 2 blank rows skipped) |
-| Classified automatically | **1,821 — 90.8%** (5 by the n-gram model, 4 by MiniLM) |
-| Flagged for review | 184 — 9.2% (every one still carries a category) |
-| Fell through to `OTHER` | **0** (was 91 before the model layers) |
+| Classified automatically | **1,848 — 92.2%** (3 by the n-gram model) |
+| Flagged for review | 157 — 7.8% |
+| Fell through to `OTHER` | 47 — 2.3%, each with a MiniLM suggestion in the evidence |
 | Unique merchants | 607 |
-| Speed | ~280 µs per transaction on average; MiniLM rows ~3 ms each |
-| Tests | 274 passing |
+| Speed | ~150 µs per transaction on average; rows ending as OTHER ~3 ms (MiniLM hint) |
+| Tests | 308 passing |
 
 ## Quick start
 
@@ -145,11 +145,10 @@ raw counterparty
   → transaction-type detection   txn_type.py     person / merchant / received / refund
   → user overrides               db/             highest priority, always
   → exact merchant lookup        merchants.py    ~110 brands + learned merchants
-  → keyword & brand rules        rules.py        461 ordered patterns
+  → keyword & brand rules        rules.py        479 ordered patterns
   → fuzzy merchant matching      fuzzy.py        typos, truncation, branch suffixes
   → ONNX n-gram model            ml.py           only below the review threshold
-  → MiniLM neighbours            semantic.py     instead of OTHER, always answers
-  → OTHER + needs_review         engine.py       never guesses
+  → OTHER + needs_review         engine.py       with a MiniLM suggestion (semantic.py)
 ```
 
 Two ordering decisions carry most of the accuracy:
@@ -207,31 +206,22 @@ and bare `… traders` / `… enterprises`. Cross-validation shows 99% agreement
 curated layers when it clears 0.75, but that measures agreement with the rules,
 not correctness — there is still no hand-labelled ground truth.
 
-### Stage 7: MiniLM, instead of `OTHER`
+### MiniLM: a hint for the reviewer
 
-Rows that every earlier layer missed would otherwise end as `OTHER`. Stage 7
-embeds the merchant with
+A row that nothing above can place ends as `OTHER`, flagged. Before it does,
 [all-MiniLM-L6-v2](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2)
-(ONNX, pinned revision, checksum-verified) and lets the 5 most similar known
-merchants vote. **It always names a category.** Only blank counterparties can
-still be `OTHER`.
-
-An answer isn't always a right answer. It clears review only when at least 80%
-of the vote agrees **and** the nearest merchant has similarity ≥ 0.50.
-Otherwise it's a labelled guess that stays in the queue, and the evidence
-shows why:
+(ONNX, pinned revision, checksum-verified) finds the 5 most similar known
+merchants, and their vote goes into the evidence as a suggestion. **It never
+sets the category.**
 
 ```
-SHOPPING  0.80        minilm: nearest 'textiles' (0.64), 82% of vote
-HEALTH    0.36 ⚠      minilm: nearest 'hcg nagpur' (0.64), 57% of vote
+OTHER  0.00 ⚠  no layer matched; minilm suggests GROCERIES (nearest 'nanda pradeep labhane' 0.47, 81% of vote)
 ```
 
-On this statement it answers 78 rows. 4 are clear and correct (`akhtar
-textile` → SHOPPING, `sonu chat` ×2 → FOOD, a person's full name → transfer).
-The other 74 are flagged guesses, and most are wrong: `smart point` (a
-grocery) lands on HEALTH, `industrial explosives` on HEALTH. The text alone doesn't say
-what these merchants are. Your corrections do, and `train` feeds them into
-the index.
+It used to replace `OTHER` with its own answer. Measured against a
+hand-labelled statement it got 1 of 40 of those rows right and cost about 10
+points of accuracy, almost entirely by overwriting a correct `OTHER`, so it
+was demoted to a hint.
 
 Setup is one command, and `start.sh` runs it on first launch:
 
@@ -239,8 +229,8 @@ Setup is one command, and `start.sh` runs it on first launch:
 .venv/bin/python -m phonepe_categorizer setup-minilm transactions2.csv   # ~90 MB, once
 ```
 
-Set `PHONEPE_CATEGORIZER_MINILM=off` to skip the layer. Without the files it
-switches itself off.
+Set `PHONEPE_CATEGORIZER_MINILM=off` to skip it. Without the files it switches
+itself off.
 
 ## Categories
 
@@ -262,7 +252,7 @@ ClassifyResult(
     confidence=0.90,
     source='RULE',                 # USER_OVERRIDE | EXACT_MERCHANT | RULE
                                    # | FUZZY_MATCH | TXN_TYPE | ML_MODEL
-                                   # | SEMANTIC | FALLBACK
+                                   # | FALLBACK
     needs_review=False,
     txn_type='PAYMENT_TO_MERCHANT',
     normalized_merchant='new matruchaya daily and general store',
@@ -271,8 +261,7 @@ ClassifyResult(
 ```
 
 Confidences are ordered preferences, not calibrated probabilities:
-override 1.0 > exact 0.97 > rule 0.90 > fuzzy ≤0.94 > model ≤0.89 > MiniLM ≤0.80
-> fallback ≤0.70.
+override 1.0 > exact 0.97 > rule 0.90 > fuzzy ≤0.94 > model ≤0.89 > fallback ≤0.70.
 
 ## Learning from corrections
 
@@ -322,10 +311,10 @@ phonepe_categorizer/
   triage.py       person vs business shape heuristics
   txn_type.py     stage 1 — transaction type
   merchants.py    stage 3 — exact directory
-  rules.py        stage 4 — 461 ordered rules
+  rules.py        stage 4 — 479 ordered rules
   fuzzy.py        stage 5 — token-alignment matcher
   ml.py           stage 6 — ONNX model runtime + featurizer
-  semantic.py     stage 7 — MiniLM embeddings, neighbour vote, setup
+  semantic.py     MiniLM embeddings and neighbour vote (hint only), setup
   train.py        trains and exports the stage-6 model
   models/         the shipped categorizer.onnx; minilm/ is fetched, not in git
   engine.py       the orchestrator (pure, no I/O)
@@ -336,12 +325,12 @@ phonepe_categorizer/
   report.py       evaluation report
   cli.py          command line
   db/             optional SQLAlchemy persistence + correction loop
-tests/            274 tests
+tests/            308 tests
 ```
 
 ## Develop
 
 ```bash
-.venv/bin/python -m pytest        # 274 tests
+.venv/bin/python -m pytest        # 308 tests
 .venv/bin/python -m ruff check .
 ```
