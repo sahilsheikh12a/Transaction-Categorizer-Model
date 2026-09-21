@@ -6,6 +6,17 @@ Binds to 127.0.0.1 only. This is financial data and this server has no
 authentication, so it must never listen on a public interface — `--host` exists
 for cases like a container port-forward, and warns when you use it.
 
+Listening on localhost is not enough on its own: any web page open in the same
+browser can send requests to it. Two checks close that:
+
+  * POSTs must carry the content type their endpoint expects. JSON and CSV are
+    not "simple" types, so a cross-site page must ask the browser's permission
+    first (a CORS preflight), and this server never grants it. Without this, a
+    page could POST text/plain and quietly write corrections into the DB.
+  * While bound to loopback, the Host header must be a loopback name. That
+    defeats DNS rebinding, where a hostile domain re-resolves to 127.0.0.1 to
+    make its requests look same-origin.
+
 Built on `http.server` rather than a framework on purpose: this is a testing
 tool, and a zero-dependency one can be run straight from a clean checkout. The
 handlers are thin wrappers over the same functions the CLI calls, so what you
@@ -22,12 +33,25 @@ from urllib.parse import urlparse
 from . import categories as C
 from .db import CategorizerRepository, open_session
 from .engine import classify_core
-from .export import OUTPUT_COLUMNS
+from .export import OUTPUT_COLUMNS, merchant_map
 from .importer import UnresolvedHeaders, parse
-from .normalize import normalize_merchant
 
 STATIC = Path(__file__).parent / "static"
 MAX_UPLOAD = 32 * 1024 * 1024  # 32 MB — well past any real statement
+LOOPBACK = ("127.0.0.1", "localhost", "::1")
+
+# The content type each POST endpoint accepts. See the module docstring.
+JSON, CSV = "application/json", "text/csv"
+POST_TYPES = {
+    "/api/classify": JSON,
+    "/api/correct": JSON,
+    "/api/categorize": CSV,
+    "/api/merchants": CSV,
+}
+
+
+class BadRequest(ValueError):
+    """The client sent something unusable. Answered with 400, not 500."""
 
 
 class _State:
@@ -35,6 +59,7 @@ class _State:
 
     def __init__(self, db_path: str | None):
         self.db_path = db_path
+        self.loopback_only = True
 
     def _session(self):
         return open_session(f"sqlite:///{self.db_path}")
@@ -101,13 +126,41 @@ class Handler(BaseHTTPRequestHandler):
         self._send(code, json.dumps(payload).encode(), "application/json; charset=utf-8")
 
     def _body(self) -> bytes:
-        length = int(self.headers.get("Content-Length") or 0)
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            raise BadRequest("invalid Content-Length") from None
+        if length < 0:
+            raise BadRequest("invalid Content-Length")
         if length > MAX_UPLOAD:
-            raise ValueError(f"upload exceeds {MAX_UPLOAD // (1024 * 1024)} MB")
+            raise BadRequest(f"upload exceeds {MAX_UPLOAD // (1024 * 1024)} MB")
         return self.rfile.read(length) if length else b""
+
+    def _json_body(self) -> dict:
+        try:
+            payload = json.loads(self._body() or b"{}")
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            raise BadRequest("body is not valid JSON") from None
+        if not isinstance(payload, dict):
+            raise BadRequest("body must be a JSON object")
+        return payload
+
+    def _host_allowed(self) -> bool:
+        """While bound to loopback, only answer to loopback host names."""
+        if not STATE.loopback_only:
+            return True
+        host = (self.headers.get("Host") or "").strip().lower()
+        if host.startswith("["):                      # [::1]:8000
+            name = host[1:host.find("]")] if "]" in host else host
+        else:
+            name = host.rsplit(":", 1)[0] if host.count(":") == 1 else host
+        return name in LOOPBACK
 
     # ── routes ──────────────────────────────────────────────────────────
     def do_GET(self) -> None:  # noqa: N802
+        if not self._host_allowed():
+            self._json({"error": "forbidden host"}, 403)
+            return
         route = urlparse(self.path).path
         if route in ("/", "/index.html"):
             page = STATIC / "index.html"
@@ -137,7 +190,20 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"error": "not found"}, 404)
 
     def do_POST(self) -> None:  # noqa: N802
+        if not self._host_allowed():
+            self._json({"error": "forbidden host"}, 403)
+            return
         route = urlparse(self.path).path
+        expected = POST_TYPES.get(route)
+        if expected is None:
+            self._json({"error": "not found"}, 404)
+            return
+        # An empty body cannot change anything (every endpoint rejects it), so
+        # only a request that carries data has to prove its content type.
+        ctype = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+        if self.headers.get("Content-Length", "0") != "0" and ctype != expected:
+            self._json({"error": f"Content-Type must be {expected}"}, 415)
+            return
         try:
             if route == "/api/classify":
                 self._classify()
@@ -145,10 +211,10 @@ class Handler(BaseHTTPRequestHandler):
                 self._categorize()
             elif route == "/api/merchants":
                 self._merchants()
-            elif route == "/api/correct":
-                self._correct()
             else:
-                self._json({"error": "not found"}, 404)
+                self._correct()
+        except BadRequest as exc:
+            self._json({"error": str(exc)}, 400)
         except UnresolvedHeaders as exc:
             self._json({"error": str(exc), "missing": exc.missing,
                         "headers": exc.headers}, 422)
@@ -157,7 +223,7 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"error": f"{type(exc).__name__}: {exc}"}, 500)
 
     def _classify(self) -> None:
-        payload = json.loads(self._body() or b"{}")
+        payload = self._json_body()
         text = (payload.get("text") or "").strip()
         if not text:
             self._json({"error": "text is required"}, 400)
@@ -211,26 +277,13 @@ class Handler(BaseHTTPRequestHandler):
             return
         result = parse(raw, dedupe=False)
         overrides, learned = STATE.learned()
-
-        spellings: dict[str, dict[str, int]] = {}
-        for t in result.rows:
-            key = normalize_merchant(t.counterparty) or t.counterparty
-            spellings.setdefault(key, {})
-            spellings[key][t.counterparty] = spellings[key].get(t.counterparty, 0) + 1
-
-        out = []
-        for variants in spellings.values():
-            name = max(variants.items(), key=lambda kv: (kv[1], kv[0]))[0]
-            # Outgoing on purpose — see export.merchant_map_csv.
-            res = classify_core(name, is_credit=False, direction="Paid to",
-                                overrides=overrides, learned=learned)
-            out.append({"merchant": name, "category": res.category,
-                        "needsReview": res.needs_review})
-        out.sort(key=lambda r: r["merchant"].lower())
-        self._json({"merchants": out})
+        self._json({"merchants": [
+            {"merchant": name, "category": category, "needsReview": review}
+            for name, category, review in merchant_map(result.rows, overrides, learned)
+        ]})
 
     def _correct(self) -> None:
-        payload = json.loads(self._body() or b"{}")
+        payload = self._json_body()
         merchant = (payload.get("merchant") or "").strip()
         category = (payload.get("category") or "").strip()
         if not merchant or category not in C.VALID:
@@ -241,7 +294,8 @@ class Handler(BaseHTTPRequestHandler):
 
 def serve(host: str = "127.0.0.1", port: int = 8000, db: str | None = "categorizer.db") -> int:
     STATE.db_path = db
-    if host not in ("127.0.0.1", "localhost", "::1"):
+    STATE.loopback_only = host in LOOPBACK
+    if not STATE.loopback_only:
         print(f"WARNING: binding to {host}. This server has no authentication and "
               f"handles financial data — do not expose it to an untrusted network.")
     httpd = ThreadingHTTPServer((host, port), Handler)

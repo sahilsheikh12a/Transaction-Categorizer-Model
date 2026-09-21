@@ -180,9 +180,9 @@ class TestCorrections:
 
 
 class TestResilience:
-    def test_bad_json_returns_500_and_server_survives(self, server):
+    def test_bad_json_returns_400_and_server_survives(self, server):
         code, _ = _expect_error(server + "/api/classify", b"{not json", "application/json")
-        assert code == 500
+        assert code == 400
         # still serving
         _, body = _req(server + "/api/classify", {"text": "KFC"})
         assert body["category"] == C.FOOD_AND_DINING
@@ -216,3 +216,40 @@ class TestMerchantsEndpoint:
     def test_empty_upload_is_rejected(self, server):
         code, _ = _expect_error(server + "/api/merchants", b"", "text/csv")
         assert code == 400
+
+
+class TestLocalServerSafety:
+    """Any page open in the same browser can reach a localhost server."""
+
+    def test_cross_site_simple_post_is_refused(self, server):
+        # text/plain needs no CORS preflight, so a hostile page could send it.
+        code, _ = _expect_error(server + "/api/correct",
+                                b'{"merchant": "X", "category": "GROCERIES"}', "text/plain")
+        assert code == 415
+        _, state = _req(server + "/api/state")
+        assert state["overrides"] == 0
+
+    def test_csv_endpoint_wants_csv(self, server):
+        code, _ = _expect_error(server + "/api/categorize",
+                                (HEADER + ROWS).encode(), "text/plain")
+        assert code == 415
+
+    def test_foreign_host_header_is_refused(self, server):
+        # DNS rebinding: a hostile domain that now resolves to 127.0.0.1.
+        r = urllib.request.Request(server + "/api/state", headers={"Host": "evil.example:80"})
+        try:
+            urllib.request.urlopen(r)
+            raise AssertionError("expected 403")
+        except urllib.error.HTTPError as exc:
+            assert exc.code == 403
+
+    def test_negative_content_length_is_a_bad_request(self, server):
+        import http.client
+        host, port = server.removeprefix("http://").split(":")
+        conn = http.client.HTTPConnection(host, int(port), timeout=5)
+        conn.putrequest("POST", "/api/classify")
+        conn.putheader("Content-Type", "application/json")
+        conn.putheader("Content-Length", "-1")
+        conn.endheaders()
+        assert conn.getresponse().status == 400
+        conn.close()
