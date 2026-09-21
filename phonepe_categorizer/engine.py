@@ -66,6 +66,10 @@ _INCOME_MARKER_RE = re.compile(
     re.IGNORECASE,
 )
 
+# A bare Indian mobile number as the counterparty is a UPI transfer to that
+# number's owner — a person in practice, but with nothing to confirm it.
+_MOBILE_NUMBER_RE = re.compile(r"(?:\+?91[\s-]?)?[6-9]\d{9}")
+
 
 
 def classify_core(
@@ -179,6 +183,9 @@ def classify_core(
     if _triage.detect_opaque(raw):
         return _r(C.PERSONAL_TRANSFER, C.SRC_FALLBACK, 0.70, review=True,
                   evidence="masked account/UPI handle")
+    if _MOBILE_NUMBER_RE.fullmatch(raw):
+        return _r(C.PERSONAL_TRANSFER, C.SRC_FALLBACK, 0.60, review=True,
+                  evidence="bare mobile number, UPI to a person")
 
     # Outgoing to a short, non-commercial, alphabetic name ("tannu", "Nirmala")
     # — too few tokens for the person heuristic, but no merchant signal either.
