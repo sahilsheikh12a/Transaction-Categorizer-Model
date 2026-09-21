@@ -7,7 +7,7 @@ before generic ones**. The ordering is load-bearing, not cosmetic:
     "ISHANT DAIRY AND ICECREAM PARLOUR" -> FOOD      (icecream before dairy)
     "Shree Ganesh Book Depot ... General Sto" -> SHOPPING (book depot before general)
     "Roshan Mobile and Repairing Centre" -> SHOPPING (mobile repair before recharge)
-    "A U K HOTELS PRIVATE LIMITED"    -> TRAVEL      (hotels ltd before bare hotel)
+    "Aapna hotel", "A U K HOTELS PRIVATE LIMITED" -> FOOD (in India a "hotel" is an eatery)
 
 Two match kinds:
   PHRASE — substring match on the normalized merchant. Use for multi-word
@@ -74,6 +74,9 @@ RULES: tuple[Rule, ...] = (
     _p("medical general", C.HEALTH),
     _t("medical", C.HEALTH),
     _t("medicals", C.HEALTH),
+    _t("madicals", C.HEALTH),           # common misspelling on shop boards
+    _t("medicos", C.HEALTH),
+    _t("medicose", C.HEALTH),
     _t("pharmacy", C.HEALTH),
     _t("pharma", C.HEALTH),
     _t("chemist", C.HEALTH),
@@ -82,7 +85,9 @@ RULES: tuple[Rule, ...] = (
     _t("hospital", C.HEALTH),
     _t("hospitals", C.HEALTH),
     _p("path labs", C.HEALTH),
-    _p("patho", C.HEALTH),
+    _p("pathology", C.HEALTH),
+    _p("pathlab", C.HEALTH),
+    _p("path lab", C.HEALTH),
     _t("diagnostics", C.HEALTH),
     _t("dental", C.HEALTH),
     _t("optical", C.HEALTH),
@@ -194,18 +199,17 @@ RULES: tuple[Rule, ...] = (
     _t("redbus", C.TRANSPORT),
     _t("fastag", C.TRANSPORT),
     _p("toll plaza", C.TRANSPORT),
+    _p("fee plaza", C.TRANSPORT),       # NHAI toll booths are named "<place> Fee Plaza"
+    _t("porter", C.TRANSPORT),          # goods-transport app
     _t("parking", C.TRANSPORT),
     _p("state transport", C.TRANSPORT),
     _p("roadways", C.TRANSPORT),
 
     # ══════════════════════════════════════════════════════════════════
-    # TRAVEL — corporate "HOTELS PVT LTD" before the bare "hotel" rule,
-    # because in India a standalone "Hotel <name>" is nearly always an eatery.
+    # TRAVEL — lodging brands and resorts. Anything named "hotel", including
+    # "... HOTELS PRIVATE LIMITED", is FOOD_AND_DINING: in India a hotel is
+    # an eatery, and a stay is booked through a travel brand instead.
     # ══════════════════════════════════════════════════════════════════
-    _p("hotels private", C.TRAVEL),
-    _p("hotels pvt", C.TRAVEL),
-    _p("hotels limited", C.TRAVEL),
-    _p("hotels ltd", C.TRAVEL),
     _p("resorts", C.TRAVEL),
     _p("resort", C.TRAVEL),
     _p("makemytrip", C.TRAVEL),
@@ -244,6 +248,9 @@ RULES: tuple[Rule, ...] = (
     _t("inox", C.ENTERTAINMENT),
     _t("cinema", C.ENTERTAINMENT),
     _t("cinemas", C.ENTERTAINMENT),
+    _t("cinepolis", C.ENTERTAINMENT),
+    _t("hotstar", C.ENTERTAINMENT),
+    _t("jiohotstar", C.ENTERTAINMENT),
     _t("multiplex", C.ENTERTAINMENT),
     _p("film rent", C.ENTERTAINMENT),
     _p("films rent", C.ENTERTAINMENT),
@@ -274,6 +281,9 @@ RULES: tuple[Rule, ...] = (
     _t("starbucks", C.FOOD_AND_DINING),
     _p("taco bell", C.FOOD_AND_DINING),
     _t("tacobell", C.FOOD_AND_DINING),
+    _t("dining", C.FOOD_AND_DINING),
+    _t("shawarma", C.FOOD_AND_DINING),
+    _t("popcorn", C.FOOD_AND_DINING),
     _t("haldiram", C.FOOD_AND_DINING),
     _t("haldirams", C.FOOD_AND_DINING),
     _t("bikanerwala", C.FOOD_AND_DINING),
@@ -324,6 +334,7 @@ RULES: tuple[Rule, ...] = (
     _p("tea center", C.FOOD_AND_DINING),
     _p("tea centre", C.FOOD_AND_DINING),
     _t("tea", C.FOOD_AND_DINING),
+    _t("chaha", C.FOOD_AND_DINING),     # Marathi for tea
     _p("juice center", C.FOOD_AND_DINING),
     _p("juice centre", C.FOOD_AND_DINING),
     _t("juice", C.FOOD_AND_DINING),
@@ -340,7 +351,7 @@ RULES: tuple[Rule, ...] = (
     _t("foods", C.FOOD_AND_DINING),
     _p("nepenthe coffee", C.FOOD_AND_DINING),
     _p("chocolates", C.FOOD_AND_DINING),
-    _t("hotel", C.FOOD_AND_DINING),      # after the "hotels pvt ltd" rules
+    _t("hotel", C.FOOD_AND_DINING),      # every hotel, corporate or not
     _t("hotels", C.FOOD_AND_DINING),
 
     # ── books & stationery, hoisted above GROCERIES ──────────────────
@@ -359,6 +370,9 @@ RULES: tuple[Rule, ...] = (
     _t("kirana", C.GROCERIES),
     _p("daily needs", C.GROCERIES),
     _p("daily and general", C.GROCERIES),
+    _p("smart point", C.GROCERIES),     # Reliance SMART Point grocery chain
+    _p("departmental store", C.GROCERIES),
+    _p("department store", C.GROCERIES),
     _p("general store", C.GROCERIES),
     _p("general stores", C.GROCERIES),
     _t("general", C.GROCERIES),
@@ -507,6 +521,10 @@ RULES: tuple[Rule, ...] = (
     _t("electronics", C.SHOPPING),
     _t("electronic", C.SHOPPING),
     _t("electrical", C.SHOPPING),
+    _t("electricals", C.SHOPPING),
+    _t("uphar", C.SHOPPING),            # "uphar gruha": gift shop
+    _t("ekart", C.SHOPPING),            # Flipkart's delivery arm, cash-on-delivery
+    _t("mall", C.SHOPPING),             # after every food/cinema rule: "Eternity Mall KFC" stays FOOD
     _p("electric stores", C.SHOPPING),
     _t("furniture", C.SHOPPING),
     _p("cycle stores", C.SHOPPING),
@@ -540,6 +558,7 @@ RULES: tuple[Rule, ...] = (
     _p("credit card payment", C.FINANCE),
     _p("bajaj finance", C.FINANCE),
     _p("bajaj finserv", C.FINANCE),
+    _t("autopay", C.FINANCE),           # mandate set-up / verification charges
 
     # ══════════════════════════════════════════════════════════════════
     # EDUCATION — deliberately LAST. Merchant names carry addresses
@@ -603,9 +622,9 @@ def lookup(signal: str | None) -> tuple[str, float, str] | None:
         return None
 
     # `normalize_merchant` drops corporate-form tokens, which is right for
-    # fuzzy matching but hides real signal from phrase rules: "A U K HOTELS
-    # PRIVATE LIMITED" must reach the "hotels private" -> TRAVEL rule before
-    # the bare "hotel" -> FOOD rule. So phrase rules get a second, unstripped
+    # fuzzy matching but hides real signal from phrase rules: "MAHANAGAR GAS
+    # LIMITED" can only reach the "gas limited" -> BILLS rule if the corporate
+    # words are still there. So phrase rules get a second, unstripped
     # haystack. Token rules keep using the stripped token set, where the
     # corporate words would only add noise.
     needle_full = canon(signal)

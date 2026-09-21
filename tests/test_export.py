@@ -146,10 +146,10 @@ class TestLearnedState:
         assert rows[0]["category_needs_review"] == "no"
 
     def test_learned_merchants_resolve_previously_unknown_names(self, run):
-        unknown = "Smart Point NAGPUR U178"
+        unknown = "Qwerty Point NAGPUR U178"
         _, plain = run(_row(unknown))
         assert plain[0]["category"] == C.OTHER
-        _, taught = run(_row(unknown), learned={"smart point nagpur": C.GROCERIES})
+        _, taught = run(_row(unknown), learned={"qwerty point nagpur": C.GROCERIES})
         assert taught[0]["category"] == C.GROCERIES
 
 

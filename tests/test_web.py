@@ -148,22 +148,22 @@ class TestCategorize:
 class TestCorrections:
     def test_correction_changes_later_classification(self, server):
         _, before = _req(server + "/api/classify",
-                         {"text": "Smart Point NAGPUR U178", "direction": "Paid to"})
+                         {"text": "Qwerty Point NAGPUR U178", "direction": "Paid to"})
         assert before["category"] == C.OTHER
         _req(server + "/api/correct",
-             {"merchant": "Smart Point NAGPUR U178", "category": C.GROCERIES})
+             {"merchant": "Qwerty Point NAGPUR U178", "category": C.GROCERIES})
         _, after = _req(server + "/api/classify",
-                        {"text": "Smart Point NAGPUR U178", "direction": "Paid to"})
+                        {"text": "Qwerty Point NAGPUR U178", "direction": "Paid to"})
         assert after["category"] == C.GROCERIES
         assert after["source"] == C.SRC_USER_OVERRIDE
 
     def test_correction_shows_up_in_a_reupload(self, server):
-        body = HEADER + ("2026-01-01,10:00,Paid to,Smart Point NAGPUR U178,"
+        body = HEADER + ("2026-01-01,10:00,Paid to,Qwerty Point NAGPUR U178,"
                          "T9,1,Debited From,4950,DEBIT,90\n")
         _, first = _req(server + "/api/categorize", body.encode(), "text/csv")
         assert first["rows"][0]["needsReview"] is True
         _req(server + "/api/correct",
-             {"merchant": "Smart Point NAGPUR U178", "category": C.GROCERIES})
+             {"merchant": "Qwerty Point NAGPUR U178", "category": C.GROCERIES})
         _, second = _req(server + "/api/categorize", body.encode(), "text/csv")
         assert second["rows"][0]["category"] == C.GROCERIES
         assert second["rows"][0]["needsReview"] is False

@@ -159,7 +159,7 @@ class TestRules:
         ("Shree Ganesh Book Depot Bag House and General Sto", C.SHOPPING,
          "book depot beats general"),
         ("Roshan Mobile and Repairing Centre", C.SHOPPING, "repair beats recharge"),
-        ("A U K HOTELS PRIVATE LIMITED", C.TRAVEL, "corporate hotels are lodging"),
+        ("A U K HOTELS PRIVATE LIMITED", C.FOOD_AND_DINING, "every Indian 'hotel' is an eatery"),
         ("Aapna hotel", C.FOOD_AND_DINING, "a standalone Indian 'hotel' is an eatery"),
         ("BHOYAR RESTAURANT DAILY NEEDS", C.FOOD_AND_DINING, "restaurant beats daily needs"),
     ])
@@ -238,6 +238,67 @@ class TestEducation:
     def test_legacy_edu_maps_to_education(self):
         assert C.coerce("edu") == C.EDUCATION
         assert C.to_legacy(C.EDUCATION) == "edu"
+
+
+class TestBusinessesThatLookLikePeople:
+    """A business misread as a person is a silent error: PERSONAL_TRANSFER is
+    confident and never reaches the review queue."""
+
+    @pytest.mark.parametrize("merchant", [
+        "CINEPOLIS INDIA PRIVATE LIMITED",     # corporate form stripped by normalize
+        "Google Asia Pacific Pte.Ltd",
+        "Delhivery Limited",
+    ])
+    def test_corporate_form_is_never_a_person(self, merchant):
+        assert _paid(merchant).category != C.PERSONAL_TRANSFER
+
+    @pytest.mark.parametrize("merchant,category", [
+        ("Prakash Electricals", C.SHOPPING),
+        ("SPICY BITE SHAWARMA", C.FOOD_AND_DINING),
+        ("Skyhi Dining", C.FOOD_AND_DINING),
+        ("SARANG MADICALS", C.HEALTH),          # misspelt shop board
+        ("AMRUT CHAHA", C.FOOD_AND_DINING),     # Marathi for tea
+        ("JAIDEEP UPHAR GRUHA", C.SHOPPING),    # gift shop
+        ("KHADAKA FEE PLAZA", C.TRANSPORT),     # NHAI toll booth
+        ("Smart Point NAGPUR U178", C.GROCERIES),
+        ("PRATHAM DEPARTMENTAL STORES", C.GROCERIES),
+        ("VR MALL NAGPUR", C.SHOPPING),
+        ("MAH NAG Eternity Mall KFC 6451", C.FOOD_AND_DINING),   # the brand beats "mall"
+    ])
+    def test_shop_words(self, merchant, category):
+        assert _paid(merchant).category == category
+
+    def test_rule_does_not_fire_inside_a_surname(self):
+        # "patho" (pathology) used to match "PATHODE".
+        assert _paid("RAHUL SURESH PATHODE").category == C.PERSONAL_TRANSFER
+        assert _paid("Innsight Path Labs").category == C.HEALTH
+
+    @pytest.mark.parametrize("hotel", [
+        "HOTEL BLUE STAR", "A U K HOTELS PRIVATE LIMITED", "Aapna hotel",
+    ])
+    def test_every_hotel_is_food(self, hotel):
+        assert _paid(hotel).category == C.FOOD_AND_DINING
+
+
+class TestMoneyFromPeople:
+    @pytest.mark.parametrize("sender", [
+        "Rohan \U0001F913",            # emoji in the saved contact name
+        "Mrs Farida Rafiq Ansari2",     # digit glued to the surname
+        "RAHUL SURESH PATHODE",
+    ])
+    def test_is_a_transfer_not_income(self, sender):
+        r = classify_core(sender, is_credit=True, direction="Received from")
+        assert r.category == C.PERSONAL_TRANSFER
+
+    def test_single_plain_name_is_a_flagged_transfer(self):
+        r = classify_core("Rohan", is_credit=True, direction="Received from")
+        assert r.category == C.PERSONAL_TRANSFER
+        assert r.needs_review is True
+
+    def test_business_credit_is_still_income(self):
+        r = classify_core("DASHREELS TECHNOLOGIES PRIVATE LIMITED", is_credit=True,
+                          direction="Received from")
+        assert r.category == C.INCOME
 
 
 # ── 5. fuzzy matching ────────────────────────────────────────────────────
