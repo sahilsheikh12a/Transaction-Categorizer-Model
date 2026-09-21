@@ -1,4 +1,4 @@
-"""Stage 7 — MiniLM neighbours, the layer that replaces OTHER.
+"""MiniLM neighbours: a suggestion in the evidence of rows that end as OTHER.
 
 Contract tests use a stub so they do not need the 90 MB model; the
 `real_minilm` tests run only when `setup-minilm` has been done.
@@ -30,42 +30,25 @@ def _paid(merchant: str, **kw):
 UNKNOWN = "Zzq Unrecognizable Enterprises Holdings"   # would be OTHER
 
 
-class TestReplacesOther:
-    def test_clear_vote_is_taken_without_review(self):
-        semantic.set_default_model(_Stub([(C.GROCERIES, 0.9), (C.HEALTH, 0.1)]))
-        r = _paid(UNKNOWN)
-        assert r.category == C.GROCERIES
-        assert r.source == C.SRC_SEMANTIC
-        assert r.confidence == semantic.CONFIDENT
-        assert r.needs_review is False
+class TestHintOnly:
+    """MiniLM suggests; it never decides. The row stays OTHER and flagged."""
 
-    def test_split_vote_still_answers_but_stays_flagged(self):
-        semantic.set_default_model(_Stub([(C.HEALTH, 0.5), (C.GROCERIES, 0.5)]))
+    def test_even_a_unanimous_vote_is_only_a_hint(self):
+        semantic.set_default_model(_Stub([(C.GROCERIES, 1.0)], similarity=0.95))
         r = _paid(UNKNOWN)
-        assert r.category == C.HEALTH                 # an answer, not OTHER
+        assert r.category == C.OTHER
+        assert r.source == C.SRC_FALLBACK
         assert r.needs_review is True
-        assert r.confidence <= semantic.GUESS_CEILING
-
-    def test_distant_neighbour_stays_flagged(self):
-        semantic.set_default_model(_Stub([(C.HEALTH, 1.0)], similarity=0.3))
-        assert _paid(UNKNOWN).needs_review is True
+        assert "minilm suggests GROCERIES" in r.evidence
 
     def test_evidence_names_the_nearest_merchant(self):
         semantic.set_default_model(_Stub([(C.SHOPPING, 1.0)], nearest="textiles"))
         assert "nearest 'textiles'" in _paid(UNKNOWN).evidence
 
-    def test_commercial_name_is_never_a_person(self):
+    def test_commercial_name_is_never_suggested_as_a_person(self):
         semantic.set_default_model(
             _Stub([(C.PERSONAL_TRANSFER, 0.9), (C.GROCERIES, 0.1)]))
-        r = _paid("Bharat Traders")
-        assert r.category == C.GROCERIES
-        assert r.needs_review is True
-
-    def test_ambiguous_phrase_always_flagged(self):
-        semantic.set_default_model(_Stub([(C.FOOD_AND_DINING, 1.0)]))
-        r = _paid("Akshay Internet Cafe")
-        assert r.source == C.SRC_SEMANTIC
-        assert r.needs_review is True
+        assert "minilm suggests GROCERIES" in _paid("Bharat Traders").evidence
 
 
 class TestNeverAsked:
@@ -140,7 +123,7 @@ class TestRealModel:
         assert v.shape == (2, 384)
         assert np.allclose(np.linalg.norm(v, axis=1), 1.0, atol=1e-5)
 
-    def test_an_unknown_merchant_gets_a_category(self, real_minilm):
-        r = _paid("Akhtar Textile")
-        assert r.source == C.SRC_SEMANTIC
-        assert r.category == C.SHOPPING
+    def test_an_unknown_merchant_gets_a_suggestion(self, real_minilm):
+        r = _paid("Zzq Unrecognizable Enterprises Holdings")
+        assert r.category == C.OTHER
+        assert "minilm suggests" in r.evidence

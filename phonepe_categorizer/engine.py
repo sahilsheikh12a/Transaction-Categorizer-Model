@@ -8,8 +8,8 @@
       -> keyword / rule classification   (rules.py)         Stage 4
       -> fuzzy merchant matching         (fuzzy.py)         Stage 5
       -> ONNX model, below-threshold only (ml.py)           Stage 6
-      -> MiniLM neighbours, instead of OTHER (semantic.py)  Stage 7
-      -> fallback OTHER + needs_review                      Stage 8
+      -> fallback, flagged                                  Stage 7
+         (OTHER carries a MiniLM hint, semantic.py)
 
 Two design decisions worth stating explicitly, because they are the ones a
 reader will want to argue with:
@@ -25,9 +25,9 @@ reader will want to argue with:
 
 No LLM and no network. Stages 1–5 are hand-curated; stage 6 is a small
 ONNX classifier that only sees strings those stages could not place, and only
-clears the review flag when it is at least `REVIEW_THRESHOLD` sure. Stage 7
-embeds whatever is still unplaced with MiniLM and always names a category, so
-OTHER is reserved for strings with no text at all. Inference
+clears the review flag when it is at least `REVIEW_THRESHOLD` sure. A row
+that still ends as OTHER gets a MiniLM suggestion in its evidence for the
+reviewer; MiniLM never sets the category. Inference
 is deterministic too, so the same input still always yields the same output,
 which is what makes the review queue and the evaluation report trustworthy.
 
@@ -184,8 +184,7 @@ def classify_core(
                           evidence=f"model: p={pred.probability:.2f}")
             hint = f"; model suggests {pred.category} (p={pred.probability:.2f})"
 
-    # ── Stage 8, first half — cheap flagged answers ─────────────────────
-    # These already name a category, so MiniLM is not asked about them.
+    # ── Stage 7 — fallback ──────────────────────────────────────────────
     # A masked account number is a UPI handle, i.e. almost certainly a person.
     # Useful enough to surface, uncertain enough to always review.
     if _triage.detect_opaque(raw):
@@ -207,26 +206,19 @@ def classify_core(
         return _r(C.PERSONAL_TRANSFER, C.SRC_FALLBACK, 0.55, review=True,
                   evidence="short non-commercial name, likely a person" + hint)
 
-    # ── Stage 7 — MiniLM neighbours, instead of OTHER ───────────────────
-    # Only rows about to become OTHER get here, so this layer always answers.
-    # It clears review only when its neighbours clearly agree; otherwise the
-    # answer is a labelled guess that stays in the queue.
+    # Nothing could place it. MiniLM's nearest neighbours go into the evidence
+    # as a suggestion for the reviewer. It never sets the category: evaluated
+    # against a hand-labelled statement it replaced correct OTHERs with wrong
+    # guesses far more often than it found the right category.
     nb = _semantic.neighbours(norm)
     if nb is not None:
-        category, clear = nb.category, nb.clear
-        if category == C.PERSONAL_TRANSFER and _triage.has_commercial_keyword(raw):
-            # Same guard as stage 6. Take the best non-person vote instead.
+        suggestion = nb.category
+        if suggestion == C.PERSONAL_TRANSFER and _triage.has_commercial_keyword(canon(raw)):
             others = [c for c, _ in nb.ranked if c != C.PERSONAL_TRANSFER]
-            category, clear = (others[0] if others else category), False
-        if _rules.is_ambiguous(raw):
-            clear = False
-        conf = _semantic.CONFIDENT if clear else min(
-            nb.share * nb.similarity, _semantic.GUESS_CEILING)
-        return _r(category, C.SRC_SEMANTIC, conf, review=not clear,
-                  evidence=f"minilm: nearest '{nb.nearest}' ({nb.similarity:.2f}), "
-                           f"{nb.share:.0%} of vote" + hint)
+            suggestion = others[0] if others else suggestion
+        hint += (f"; minilm suggests {suggestion} (nearest '{nb.nearest}' "
+                 f"{nb.similarity:.2f}, {nb.share:.0%} of vote)")
 
-    # ── Stage 8, second half — nothing left to try ──────────────────────
     return _r(C.OTHER, C.SRC_FALLBACK, 0.0, review=True, evidence="no layer matched" + hint)
 
 

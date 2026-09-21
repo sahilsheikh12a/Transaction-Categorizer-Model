@@ -1,16 +1,14 @@
-"""Stage 7 — MiniLM semantic neighbours, the last resort before OTHER.
+"""MiniLM semantic neighbours: a hint for rows that end as OTHER.
 
 Everything that reaches this layer has been missed by every curated layer and
-by the stage-6 n-gram model. Rather than give up with OTHER, it embeds the
-merchant with all-MiniLM-L6-v2 (ONNX) and lets the 5 most similar known
-merchants vote. It always answers — the only strings that stay OTHER are
-empty ones, or every string when this layer is not installed.
+by the stage-6 n-gram model. It embeds the merchant with all-MiniLM-L6-v2
+(ONNX), lets the 5 most similar known merchants vote, and the engine writes
+the winner into the evidence as a suggestion. The row stays OTHER and
+flagged; the reviewer decides.
 
-Always answering is not the same as always being right. The answer only
-clears `needs_review` when the neighbours clearly agree (`AGREE_SHARE`) and
-the nearest one is genuinely close (`MIN_SIMILARITY`); otherwise it is a
-labelled guess, still in the review queue, with the nearest neighbour named
-in the evidence so a reviewer can see why.
+It used to set the category itself. Evaluated against a hand-labelled
+statement it got 1 of 40 rows right and cost ~10 points of accuracy, almost
+all by replacing a correct OTHER with a wrong guess, so it was demoted.
 
 Files (not in git — `python -m phonepe_categorizer setup-minilm` fetches and
 builds them, ~90 MB):
@@ -47,15 +45,7 @@ FILES = {
 INDEX_FILE = "index.npz"
 
 K = 5                 # neighbours that vote
-AGREE_SHARE = 0.80    # share of the vote the winner needs to skip review
-MIN_SIMILARITY = 0.50  # cosine similarity the nearest neighbour needs, likewise
 MAX_TOKENS = 64       # merchant strings are short; this is generous
-
-# Confidence reported for a clear answer, and the ceiling for a guess. Both sit
-# below the stage-6 model (0.89) and the guess ceiling stays under
-# REVIEW_THRESHOLD so it always lands in the review queue.
-CONFIDENT = 0.80
-GUESS_CEILING = 0.70
 
 ENV_SWITCH = "PHONEPE_CATEGORIZER_MINILM"
 
@@ -67,10 +57,6 @@ class Neighbours:
     similarity: float     # cosine similarity of the nearest neighbour
     nearest: str          # the nearest neighbour's text
     ranked: tuple[tuple[str, float], ...]  # every voted category, best first
-
-    @property
-    def clear(self) -> bool:
-        return self.share >= AGREE_SHARE and self.similarity >= MIN_SIMILARITY
 
 
 class Embedder:
@@ -230,5 +216,5 @@ def neighbours(text: str) -> Neighbours | None:
 __all__ = [
     "Embedder", "SemanticModel", "Neighbours", "neighbours", "fetch", "build_index",
     "is_installed", "default_model", "set_default_model", "reset_default_model",
-    "disabled", "MODEL_DIR", "CONFIDENT", "GUESS_CEILING",
+    "disabled", "MODEL_DIR",
 ]
