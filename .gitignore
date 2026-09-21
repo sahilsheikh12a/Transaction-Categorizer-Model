@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+*.py[cod]
+*.db
+.pytest_cache/
+.ruff_cache/
+
+# Personal financial data: the statement and everything derived from it
+/transactions*.csv
+reports/

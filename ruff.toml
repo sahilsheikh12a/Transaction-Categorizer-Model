@@ -1,0 +1,10 @@
+line-length = 100
+target-version = "py311"
+
+[lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "C4"]
+
+[lint.per-file-ignores]
+# Rule and merchant tables are long literal blocks by design.
+"phonepe_categorizer/rules.py" = ["E501"]
+"phonepe_categorizer/merchants.py" = ["E501"]

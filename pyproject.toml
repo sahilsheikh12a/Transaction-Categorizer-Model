@@ -1,0 +1,19 @@
+[project]
+name = "phonepe-categorizer"
+version = "1.0.0"
+description = "Deterministic, offline transaction categorization for PhonePe statements"
+requires-python = ">=3.11"
+dependencies = ["sqlalchemy>=2.0.40"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0.0", "ruff>=0.6.0"]
+
+[project.scripts]
+phonepe-categorizer = "phonepe_categorizer.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["phonepe_categorizer*"]
