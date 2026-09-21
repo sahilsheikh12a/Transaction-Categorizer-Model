@@ -98,8 +98,14 @@ SRC_RULE: Final = "RULE"
 SRC_FUZZY_MATCH: Final = "FUZZY_MATCH"
 SRC_TXN_TYPE: Final = "TXN_TYPE"
 SRC_ML_MODEL: Final = "ML_MODEL"
-SRC_SEMANTIC: Final = "SEMANTIC"
 SRC_FALLBACK: Final = "FALLBACK"
+
+# Layers whose answer is a fact about the merchant itself, rather than about one
+# payment's direction (TXN_TYPE) or a guess (ML_MODEL, FALLBACK). Only these may
+# be learned into the directory or used as training labels.
+IDENTITY_SOURCES: Final[frozenset[str]] = frozenset({
+    SRC_EXACT_MERCHANT, SRC_RULE, SRC_FUZZY_MATCH,
+})
 
 SOURCES: Final[tuple[str, ...]] = (
     SRC_USER_OVERRIDE,
@@ -108,7 +114,6 @@ SOURCES: Final[tuple[str, ...]] = (
     SRC_FUZZY_MATCH,
     SRC_TXN_TYPE,
     SRC_ML_MODEL,
-    SRC_SEMANTIC,
     SRC_FALLBACK,
 )
 
@@ -188,6 +193,6 @@ __all__ = [
     "FINANCE", "EDUCATION", "PERSONAL_TRANSFER", "INCOME", "OTHER",
     "ALL", "VALID", "DEFINITIONS",
     "SRC_USER_OVERRIDE", "SRC_EXACT_MERCHANT", "SRC_RULE", "SRC_FUZZY_MATCH",
-    "SRC_TXN_TYPE", "SRC_ML_MODEL", "SRC_SEMANTIC", "SRC_FALLBACK", "SOURCES",
+    "SRC_TXN_TYPE", "SRC_ML_MODEL", "SRC_FALLBACK", "SOURCES", "IDENTITY_SOURCES",
     "to_legacy", "coerce", "is_valid",
 ]

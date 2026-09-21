@@ -3,7 +3,7 @@
     RAW TRANSACTION
       -> merchant normalization          (normalize.py)
       -> transaction-type detection      (txn_type.py)      Stage 1
-      -> user merchant overrides         (overrides.py)     Stage 2
+      -> user merchant overrides         (db/, as a dict)   Stage 2
       -> exact merchant lookup           (merchants.py)     Stage 3
       -> keyword / rule classification   (rules.py)         Stage 4
       -> fuzzy merchant matching         (fuzzy.py)         Stage 5

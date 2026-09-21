@@ -37,6 +37,15 @@ def _url(path: str) -> str:
     return f"sqlite:///{path}"
 
 
+def _learned_state(db: str | None) -> tuple[dict | None, dict | None]:
+    """(overrides, learned merchants) from `db`, or (None, None) if there is none."""
+    if not db or not Path(db).exists():
+        return None, None
+    with open_session(_url(db)) as s:
+        repo = CategorizerRepository(s)
+        return repo.overrides(), repo.learned_merchants()
+
+
 def _print_result(label: str, res) -> None:
     flag = "  ⚠ needs review" if res.needs_review else ""
     print(f"{label}\n"
@@ -50,15 +59,11 @@ def _print_result(label: str, res) -> None:
 
 def cmd_categorize(args) -> int:
     """CSV in, CSV out — the batch path."""
-    overrides = learned = None
-    if args.db and Path(args.db).exists():
-        # Use whatever the system has already been taught.
-        with open_session(_url(args.db)) as s:
-            repo = CategorizerRepository(s)
-            overrides, learned = repo.overrides(), repo.learned_merchants()
-        if overrides or learned:
-            print(f"using {len(overrides)} override(s) and "
-                  f"{len(learned)} learned merchant(s) from {args.db}")
+    # Use whatever the system has already been taught.
+    overrides, learned = _learned_state(args.db)
+    if overrides or learned:
+        print(f"using {len(overrides)} override(s) and "
+              f"{len(learned)} learned merchant(s) from {args.db}")
 
     out = args.output or str(Path(args.csv).with_name(Path(args.csv).stem + "_categorized.csv"))
     try:
@@ -74,11 +79,7 @@ def cmd_categorize(args) -> int:
 
 def cmd_merchants(args) -> int:
     """Two-column merchant -> category lookup table."""
-    overrides = learned = None
-    if args.db and Path(args.db).exists():
-        with open_session(_url(args.db)) as s:
-            repo = CategorizerRepository(s)
-            overrides, learned = repo.overrides(), repo.learned_merchants()
+    overrides, learned = _learned_state(args.db)
     out = args.output or str(
         Path(args.csv).with_name(Path(args.csv).stem + "_merchants.csv")
     )
@@ -182,11 +183,7 @@ def cmd_train(args) -> int:
         print(f"error: {exc}\ninstall the training extras: "
               f".venv/bin/pip install -r requirements-train.txt")
         return 2
-    overrides = learned = None
-    if args.db and Path(args.db).exists():
-        with open_session(_url(args.db)) as s:
-            repo = CategorizerRepository(s)
-            overrides, learned = repo.overrides(), repo.learned_merchants()
+    overrides, learned = _learned_state(args.db)
     kwargs = {"output": Path(args.output)} if args.output else {}
     report = train([Path(p) for p in args.csv], overrides=overrides, learned=learned,
                    c=args.c, **kwargs)
@@ -204,11 +201,7 @@ def cmd_setup_minilm(args) -> int:
     except (OSError, RuntimeError) as exc:
         print(f"error: {exc}")
         return 2
-    overrides = learned = None
-    if args.db and Path(args.db).exists():
-        with open_session(_url(args.db)) as s:
-            repo = CategorizerRepository(s)
-            overrides, learned = repo.overrides(), repo.learned_merchants()
+    overrides, learned = _learned_state(args.db)
     examples = build_dataset([Path(p) for p in args.csv], overrides=overrides, learned=learned)
     print(f"MiniLM index built with {build_semantic_index(examples)} merchants")
     return 0
@@ -228,11 +221,10 @@ def cmd_label_sheet(args) -> int:
 def cmd_evaluate(args) -> int:
     from .evaluate import LabelError, as_text, evaluate, write_json
 
-    learned = overrides = None
-    if args.db:
-        with open_session(_url(args.db), create=False) as s:
-            repo = CategorizerRepository(s)
-            learned, overrides = repo.learned_merchants(), repo.overrides()
+    if args.db and not Path(args.db).exists():
+        print(f"error: database not found: {args.db}")
+        return 2
+    overrides, learned = _learned_state(args.db)
     try:
         report = evaluate(Path(args.csv), Path(args.labels),
                           train_csv=Path(args.train) if args.train else None,

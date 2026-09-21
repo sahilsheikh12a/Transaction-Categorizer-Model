@@ -203,6 +203,44 @@ def categorize_csv(
     return summary
 
 
+def merchant_map(
+    rows,
+    overrides: dict[str, str] | None = None,
+    learned: dict[str, str] | None = None,
+) -> list[tuple[str, str, bool]]:
+    """(name, category, needs_review) per unique merchant, sorted by name.
+
+    Merchants are grouped by their normalized key, so "Maturchaya Kirana 2" and
+    "MATURCHAYA KIRANA" are one entry. The name returned is the spelling that
+    appeared most often, because that is what the user will recognize — the
+    normalized form is a matching key, not a label.
+    """
+    # Collect the spellings each merchant appears under, and how often.
+    spellings: dict[str, dict[str, int]] = {}
+    for txn in rows:
+        # Masked counterparties normalize to "" — key them on the raw string so
+        # every masked account does not collapse into a single nameless row.
+        key = normalize_merchant(txn.counterparty) or txn.counterparty
+        spellings.setdefault(key, {})
+        spellings[key][txn.counterparty] = spellings[key].get(txn.counterparty, 0) + 1
+
+    out = []
+    for variants in spellings.values():
+        name = max(variants.items(), key=lambda kv: (kv[1], kv[0]))[0]
+        # Classify as an OUTGOING payment regardless of how the statement's rows
+        # actually ran. This table answers "what kind of merchant is this", and
+        # a merchant that only ever appears as a credit would otherwise be
+        # labelled INCOME — filing a garage that issued one refund under income
+        # rather than transport, and poisoning anything that consumes the file.
+        res = classify_core(
+            name, is_credit=False, direction="Paid to",
+            overrides=overrides, learned=learned,
+        )
+        out.append((name, res.category, res.needs_review))
+    out.sort(key=lambda r: r[0].lower())
+    return out
+
+
 def merchant_map_csv(
     src: str | Path,
     dst: str | Path,
@@ -216,37 +254,11 @@ def merchant_map_csv(
     this file is the mapping, and 2,000 transactions over 600 merchants would
     otherwise repeat every answer three times over.
 
-    Merchants are grouped by their normalized key, so "Maturchaya Kirana 2" and
-    "MATURCHAYA KIRANA" are one row. The name written out is the spelling that
-    appeared most often, because that is what the user will recognize — the
-    normalized form is a matching key, not a label.
+    Grouping and naming follow `merchant_map`.
     """
     src, dst = Path(src), Path(dst)
     result = parse(src.read_bytes(), dedupe=False)
-
-    # Collect the spellings each merchant appears under, and how often.
-    spellings: dict[str, dict[str, int]] = {}
-    for txn in result.rows:
-        # Masked counterparties normalize to "" — key them on the raw string so
-        # every masked account does not collapse into a single nameless row.
-        key = normalize_merchant(txn.counterparty) or txn.counterparty
-        spellings.setdefault(key, {})
-        spellings[key][txn.counterparty] = spellings[key].get(txn.counterparty, 0) + 1
-
-    rows = []
-    for variants in spellings.values():
-        name = max(variants.items(), key=lambda kv: (kv[1], kv[0]))[0]
-        # Classify as an OUTGOING payment regardless of how the statement's rows
-        # actually ran. This table answers "what kind of merchant is this", and
-        # a merchant that only ever appears as a credit would otherwise be
-        # labelled INCOME — filing a garage that issued one refund under income
-        # rather than transport, and poisoning anything that consumes the file.
-        res = classify_core(
-            name, is_credit=False, direction="Paid to",
-            overrides=overrides, learned=learned,
-        )
-        rows.append((name, res.category, res.needs_review))
-    rows.sort(key=lambda r: r[0].lower())
+    rows = merchant_map(result.rows, overrides, learned)
 
     with dst.open("w", newline="", encoding="utf-8") as fh:
         writer = csv.writer(fh)
@@ -263,6 +275,6 @@ def merchant_map_csv(
 
 
 __all__ = [
-    "categorize_csv", "merchant_map_csv",
+    "categorize_csv", "merchant_map", "merchant_map_csv",
     "ExportSummary", "MerchantMapSummary", "OUTPUT_COLUMNS",
 ]

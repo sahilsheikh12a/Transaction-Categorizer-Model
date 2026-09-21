@@ -47,8 +47,6 @@ from .engine import REVIEW_THRESHOLD, classify_core
 from .importer import parse_file
 from .normalize import normalize_merchant
 
-_IDENTITY_SOURCES = frozenset({C.SRC_EXACT_MERCHANT, C.SRC_RULE, C.SRC_FUZZY_MATCH})
-
 # Later origins overwrite earlier ones for the same merchant.
 _PRIORITY = ("rule", "built-in", "statement", "learned", "override")
 _WEIGHT = {"override": 3.0}
@@ -124,7 +122,7 @@ def _curated_only() -> Iterator[None]:
 def _statement_label(res) -> str | None:
     if res.needs_review:
         return None
-    if res.source in _IDENTITY_SOURCES and res.txn_type == "PAYMENT_TO_MERCHANT":
+    if res.source in C.IDENTITY_SOURCES and res.txn_type == "PAYMENT_TO_MERCHANT":
         return res.category
     if res.source == C.SRC_TXN_TYPE and res.txn_type == "PAYMENT_TO_PERSON":
         return C.PERSONAL_TRANSFER

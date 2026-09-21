@@ -40,15 +40,6 @@ from .models import (
 # as a directory entry (and therefore as a fuzzy-match target).
 LEARN_THRESHOLD = 0.90
 
-# Only these layers identify *what a merchant is*. TXN_TYPE and FALLBACK derive
-# their category from the direction of one payment instead, which is not a
-# property of the merchant: a refund from a garage is INCOME for that row, but
-# the garage is still TRANSPORT. Learning from them poisons the directory —
-# and, because the directory is also the fuzzy corpus, poisons fuzzy matching.
-_IDENTITY_SOURCES = frozenset({
-    C.SRC_EXACT_MERCHANT, C.SRC_RULE, C.SRC_FUZZY_MATCH,
-})
-
 
 @contextmanager
 def open_session(
@@ -196,10 +187,15 @@ class CategorizerRepository:
     @staticmethod
     def _is_learnable(result: ClassifyResult) -> bool:
         """Is this result evidence about the merchant, or just about one row?"""
+        # Only these layers identify *what a merchant is*. TXN_TYPE and FALLBACK derive
+        # their category from the direction of one payment instead, which is not a
+        # property of the merchant: a refund from a garage is INCOME for that row, but
+        # the garage is still TRANSPORT. Learning from them poisons the directory —
+        # and, because the directory is also the fuzzy corpus, poisons fuzzy matching.
         return (
             not result.needs_review
             and result.confidence >= LEARN_THRESHOLD
-            and result.source in _IDENTITY_SOURCES
+            and result.source in C.IDENTITY_SOURCES
             and result.txn_type == "PAYMENT_TO_MERCHANT"
         )
 

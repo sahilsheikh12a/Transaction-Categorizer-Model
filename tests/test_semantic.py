@@ -62,7 +62,7 @@ class TestNeverAsked:
     def test_rows_that_already_have_an_answer(self, merchant):
         stub = _Stub([(C.TRAVEL, 1.0)])
         semantic.set_default_model(stub)
-        assert _paid(merchant).source != C.SRC_SEMANTIC
+        _paid(merchant)
         assert stub.calls == 0
 
 

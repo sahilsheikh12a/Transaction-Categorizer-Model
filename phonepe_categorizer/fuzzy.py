@@ -21,8 +21,9 @@ produces a confident-looking category the user never asked for. Three guards:
                         must not be within `_MARGIN` (an ambiguous best match
                         is treated as no match).
 
-Scoring blends character-level similarity (difflib) with token-set containment
-(Jaccard), so both "typo" and "extra words" cases are covered. Pure stdlib —
+Scoring blends whole-string character similarity (difflib, 40%) with token
+alignment (60%: each token's best match in the other string), so both "typo"
+and "extra words" cases are covered. Pure stdlib —
 no new dependency, works offline.
 """
 from __future__ import annotations
@@ -50,27 +51,6 @@ _WEAK_ANCHORS = frozenset({
 
 def _tokens(s: str) -> set[str]:
     return {t for t in s.split() if t}
-
-
-def _jaccard(a: set[str], b: set[str]) -> float:
-    if not a or not b:
-        return 0.0
-    inter = len(a & b)
-    if not inter:
-        return 0.0
-    return inter / len(a | b)
-
-
-def _containment(a: set[str], b: set[str]) -> float:
-    """Fraction of the smaller token set covered by the larger one.
-
-    Handles "shabana bakery buttibori" vs "shabana bakery" — Jaccard punishes
-    the extra locality token, containment does not.
-    """
-    if not a or not b:
-        return 0.0
-    small, large = (a, b) if len(a) <= len(b) else (b, a)
-    return len(small & large) / len(small)
 
 
 def _near_token(a: str, b: str) -> bool:
