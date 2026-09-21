@@ -1,0 +1,4 @@
+-r requirements.txt
+scikit-learn>=1.5
+skl2onnx>=1.18
+onnx>=1.17

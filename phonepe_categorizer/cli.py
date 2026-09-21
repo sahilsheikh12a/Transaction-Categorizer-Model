@@ -10,6 +10,7 @@
     python -m phonepe_categorizer correct   "Smart Point NAGPUR U178" GROCERIES
     python -m phonepe_categorizer rule      kirana GROCERIES --kind token
     python -m phonepe_categorizer reclassify
+    python -m phonepe_categorizer train     transactions2.csv
 
 `report` and `classify` are stateless. Everything else reads and writes the
 SQLite file given by --db, which is where overrides and learned merchants live.
@@ -171,6 +172,25 @@ def cmd_reclassify(args) -> int:
     return 0
 
 
+def cmd_train(args) -> int:
+    try:
+        from .train import train
+    except ImportError as exc:
+        print(f"error: {exc}\ninstall the training extras: "
+              f".venv/bin/pip install -r requirements-train.txt")
+        return 2
+    overrides = learned = None
+    if args.db and Path(args.db).exists():
+        with open_session(_url(args.db)) as s:
+            repo = CategorizerRepository(s)
+            overrides, learned = repo.overrides(), repo.learned_merchants()
+    kwargs = {"output": Path(args.output)} if args.output else {}
+    report = train([Path(p) for p in args.csv], overrides=overrides, learned=learned,
+                   c=args.c, **kwargs)
+    print(report.as_text())
+    return 0
+
+
 def cmd_serve(args) -> int:
     from .web import serve
     return serve(host=args.host, port=args.port, db=None if args.no_db else args.db)
@@ -250,6 +270,14 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("reclassify", help="re-run the pipeline over stored rows")
     p.add_argument("--db", default=DEFAULT_DB)
     p.set_defaults(func=cmd_reclassify)
+
+    p = sub.add_parser("train", help="retrain the stage-6 ONNX model")
+    p.add_argument("csv", nargs="+", help="one or more statements to learn from")
+    p.add_argument("--db", default=DEFAULT_DB,
+                   help="also learn from this DB's corrections and merchants if it exists")
+    p.add_argument("-o", "--output", help="defaults to the shipped model path")
+    p.add_argument("--c", type=float, default=10.0, help="inverse regularization strength")
+    p.set_defaults(func=cmd_train)
 
     p = sub.add_parser("serve", help="run the local browser UI")
     p.add_argument("--host", default="127.0.0.1")
