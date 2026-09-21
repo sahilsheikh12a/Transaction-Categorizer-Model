@@ -79,13 +79,20 @@ nothing in the string says so.
                                   └─────────┬──────────┘
                                             │ miss
                                   ┌─────────▼──────────┐
-                                  │ OTHER              │ stage 6
+                                  │ ONNX model         │ stage 6  ml.py
+                                  │ taken if p ≥ 0.75  │ (not for masked
+                                  └─────────┬──────────┘  or ambiguous)
+                                            │ unsure: kept as a hint
+                                  ┌─────────▼──────────┐
+                                  │ OTHER              │ stage 7
                                   │ needs_review=True  │
                                   └────────────────────┘
 ```
 
-Implemented as one pure function, `engine.classify_core`, ~100 lines. No I/O, no
-globals, no database. Learned state arrives as two plain dicts.
+Implemented as one function, `engine.classify_core`, ~120 lines. No I/O and no
+database; learned state arrives as two plain dicts. The one piece of process
+state is the ONNX model, loaded once on first use and replaceable with
+`ml.set_default_model` (tests switch it off by default).
 
 ---
 
@@ -125,20 +132,24 @@ human can tell you that `CHETMANI DWARKAPRASAD SAHU` is a grocery shop.
 
 | Module | Lines | Role |
 |---|---:|---|
-| `categories.py` | 185 | 13 categories, definitions, source constants, legacy bridge |
+| `categories.py` | 187 | 13 categories, definitions, source constants, legacy bridge |
 | `normalize.py` | 162 | two normalizers — storage key and matching key |
 | `triage.py` | 131 | person-vs-business shape heuristics, 258 commercial tokens |
 | `txn_type.py` | 136 | stage 1 |
 | `merchants.py` | 182 | stage 3, 101 built-in brands |
-| `rules.py` | 514 | stage 4, 363 ordered rules |
+| `rules.py` | 528 | stage 4, 363 ordered rules |
 | `fuzzy.py` | 184 | stage 5 |
-| `engine.py` | 170 | the orchestrator |
+| `ml.py` | 177 | stage 6 — featurizer + ONNX runtime, optional |
+| `train.py` | 306 | builds the dataset, trains, exports the ONNX model |
+| `engine.py` | 194 | the orchestrator |
 | `schema.py` | 70 | `ClassifyResult` |
 | `importer.py` | 361 | CSV → transactions, role-based, resilient |
 | `db/` | 553 | optional persistence + the correction loop |
 
-The engine depends on nothing but the pure modules. `importer`, `db`, `export`,
-`report`, `web` and `cli` all depend on the engine and never the reverse.
+The engine depends on nothing but the pure modules and `ml.py`, which
+degrades to "no answer" when onnxruntime or the model file is missing.
+`importer`, `db`, `export`, `report`, `web`, `cli` and `train` all depend on
+the engine and never the reverse.
 
 ---
 
@@ -256,6 +267,7 @@ Confidences are **ordered preferences, not calibrated probabilities**:
 | `RULE` | 0.90 | a curated keyword |
 | `FUZZY_MATCH` | ≤0.94 | looks like something known |
 | `TXN_TYPE` | 0.60–0.99 | decided by flow, not merchant |
+| `ML_MODEL` | 0.75–0.89 | the model's probability, capped below `RULE` |
 | `FALLBACK` | 0.00–0.70 | a guess or a refusal |
 
 Anything below 0.75 sets `needs_review`.
@@ -282,7 +294,8 @@ outgoing payments resolved by an identity layer (`EXACT_MERCHANT`, `RULE`,
 a garage was `INCOME`, because a refund came from it — and since the directory
 doubles as the fuzzy corpus, that error spread. The guard cut learned merchants
 from 497 to 178, all genuine, and made `reclassify` a no-op immediately after
-import instead of changing 260 categories.
+import instead of changing 260 categories. `ML_MODEL` is outside the guard for
+the same reason: a model's guess is not a fact about a merchant.
 
 `raw_counterparty` is **never** overwritten. Everything else is derived, so
 `reclassify` can always rebuild from the original text.
@@ -294,16 +307,16 @@ import instead of changing 260 categories.
 | | |
 |---|---:|
 | Transactions | 2,005 |
-| Auto-classified | **1,800 — 89.8%** |
-| Flagged for review | 205 — 10.2% |
+| Auto-classified | **1,807 — 90.1%** |
+| Flagged for review | 198 — 9.9% |
 | `OTHER` | 91 — 4.5% |
-| Speed | ~120 µs/txn |
+| Speed | ~129 µs/txn |
 
-By deciding layer: `TXN_TYPE` 971 · `RULE` 634 · `FALLBACK` 201 ·
-`EXACT_MERCHANT` 196 · `FUZZY_MATCH` 3.
+By deciding layer: `TXN_TYPE` 971 · `RULE` 634 · `EXACT_MERCHANT` 196 ·
+`FALLBACK` 194 · `ML_MODEL` 7 · `FUZZY_MATCH` 3.
 
-**89.8% is coverage, not accuracy.** It means 1,800 transactions got a confident
-answer — not that 1,800 are correct. There is no labelled ground truth for this
+**90.1% is coverage, not accuracy.** It means 1,807 transactions got a confident
+answer — not that 1,807 are correct. There is no labelled ground truth for this
 statement, so precision is unmeasured. The report's suspicious-classification
 sections exist precisely because of that gap.
 
@@ -320,21 +333,58 @@ Known limits:
 
 ---
 
-## 11. Why no ML
+## 11. The model layer, and why it is last
 
 ~90% of these transactions are decided by an exact merchant name or a single
-keyword. That is a lookup table's job, and the table already reaches 89.8%
-while remaining reproducible and explainable — two properties a model would
-cost and neither of which the residual 10% needs.
+keyword. That is a lookup table's job, and the table does it reproducibly and
+with `evidence`. So the model does not replace any layer. It runs in the one
+place where the table has nothing to say: rows about to fall back under the
+review threshold.
 
-Training on this system's own output would be circular: the labels are the rule
-engine's answers, so a model would learn to imitate `rules.py` including its
-mistakes, while trading away determinism and `evidence`.
+**What it is.** Logistic regression over hashed character n-grams (2–4 chars
+plus whole words, CRC32 into 16,384 buckets, L2-normalized), exported with
+skl2onnx and run with onnxruntime. The featurizer lives in `ml.py`, not in the
+graph, so the graph is a single matrix multiply that any ONNX runtime can
+execute; its spec string is stored in the model's metadata and checked at
+load. The model is ~900 KB and costs ~80 µs on the rows that reach it.
 
-The labels that would be worth something are the **human** ones in
-`merchant_overrides`, and the design already accumulates them: the review queue
-is an unlabelled pool ranked by spend, and `previous_category` records what the
-classifier got wrong so frequently-corrected *rules* can be fixed directly.
+**What it learns from.** There is no hand-labelled ground truth, so it is
+distilled from the curated layers: 101 built-in brands, 363 rule patterns, the
+statement's confidently-classified outgoing merchants (identity layers, plus
+person-to-person payments as `PERSONAL_TRANSFER`), learned merchants, and user
+overrides at 3× weight. Statement labels are produced with the model switched
+off, so it never trains on its own answers. `INCOME` and `OTHER` are never
+targets: one is a property of a payment's direction, the other is the absence
+of an answer.
 
-If a model is ever added, it belongs **after** the deterministic layers as a
-suggestion for `needs_review` rows — never replacing them.
+That is circular on purpose. The model cannot know more than the rules; the
+bet is that it generalizes their spelling patterns to strings no rule matches.
+
+**Guards.**
+
+- Never asked about masked handles, incoming rows, or `AMBIGUOUS_PHRASES`
+  (without this, `akshay internet cafe` → FOOD at 0.81).
+- A `PERSONAL_TRANSFER` answer is refused when the string has a commercial
+  keyword (`bharat traders` is not a friend).
+- Taken only at p ≥ 0.75. Below that the row stays flagged and the guess is
+  appended to `evidence` as a hint for the reviewer.
+- Confidence capped at 0.89, below `RULE`.
+- Never learned into the merchant directory (§9).
+
+**What it buys — measured, not hoped.** 5-fold cross-validation gives 99.2%
+agreement with the curated layers on the 57% of held-out merchants it clears
+0.75 on. That number flatters it, because held-out merchants usually still
+contain a keyword the training set has. On the 201 rows that actually reach
+stage 6 it resolves **7**: `raju`, `rupesh`, `kamlesh`, `shubham` as transfers
+(plausible) and `sweety` → FOOD (probably a person; wrong). Its sub-threshold
+guesses on the rest are mostly wrong — the college is "FOOD_AND_DINING, 0.49".
+The residual is not a spelling problem: a college with no EDUCATION category,
+shops wearing people's names, and bare `… traders` / `… enterprises`. No
+text-only model fixes those.
+
+**Where real gains would come from.** The human labels in
+`merchant_overrides`. The review queue is an unlabelled pool ranked by spend,
+`train` already weights corrections 3×, and `previous_category` records what
+the classifier got wrong so frequently-corrected *rules* can be fixed directly.
+Retrain after a batch of corrections; measure against those corrections, not
+against the rules.

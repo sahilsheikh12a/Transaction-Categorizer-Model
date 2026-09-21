@@ -1,8 +1,9 @@
 # PhonePe Transaction Categorizer
 
 Deterministic, offline categorization of PhonePe statement transactions into a
-small set of day-to-day expense categories. No LLM, no network, no model
-weights — the same input always produces the same output.
+small set of day-to-day expense categories. No LLM and no network: five
+hand-curated layers, plus a small ONNX model that only sees what they could not
+place. The same input always produces the same output.
 
 Built and evaluated against a real 2,009-row statement (`transactions2.csv`,
 Jul 2024 – Apr 2026).
@@ -12,12 +13,12 @@ Jul 2024 – Apr 2026).
 | | |
 |---|---|
 | Transactions parsed | **2,005** of 2,009 (2 duplicates collapsed, 2 blank rows skipped) |
-| Classified automatically | **1,799 — 89.7%** |
-| Flagged for review | 206 — 10.3% |
-| Fell through to `OTHER` | 92 — 4.6% |
+| Classified automatically | **1,807 — 90.1%** (7 of them by the model) |
+| Flagged for review | 198 — 9.9% |
+| Fell through to `OTHER` | 91 — 4.5% |
 | Unique merchants | 607 |
-| Speed | ~117 µs per transaction |
-| Tests | 190 passing |
+| Speed | ~129 µs per transaction |
+| Tests | 226 passing |
 
 ## Quick start
 
@@ -145,6 +146,7 @@ raw counterparty
   → exact merchant lookup        merchants.py    ~110 brands + learned merchants
   → keyword & brand rules        rules.py        361 ordered patterns
   → fuzzy merchant matching      fuzzy.py        typos, truncation, branch suffixes
+  → ONNX model                   ml.py           only below the review threshold
   → OTHER + needs_review         engine.py       never guesses
 ```
 
@@ -162,6 +164,44 @@ a transfer to a friend.
 
 User overrides sit above both. Small Indian vendors routinely collect on
 personal UPI accounts, and only the user can resolve that.
+
+## The model layer
+
+Stage 6 is a logistic-regression classifier over hashed character n-grams,
+shipped as `phonepe_categorizer/models/categorizer.onnx` (~900 KB) and run with
+onnxruntime. It is asked only about outgoing rows every curated layer missed —
+never about masked handles, incoming money, or phrases the rules deliberately
+abstain on. At probability ≥ 0.75 its answer is taken (`source=ML_MODEL`,
+confidence capped at 0.89, below every curated layer); below that the row stays
+flagged and the evidence carries its guess:
+
+```
+evidence    no layer matched; model suggests FOOD_AND_DINING (p=0.49)
+```
+
+Its answers are never learned into the merchant directory, so a wrong one
+cannot spread into exact or fuzzy matching.
+
+It learns from what the curated layers already know — the built-in brands,
+every rule pattern, the statement's confidently-classified merchants, and your
+corrections (weighted 3×). Retrain after a new statement or a batch of
+corrections:
+
+```bash
+.venv/bin/pip install -r requirements-train.txt   # scikit-learn, skl2onnx
+.venv/bin/python -m phonepe_categorizer train transactions2.csv
+```
+
+Set `PHONEPE_CATEGORIZER_ML=off` to run without it. If onnxruntime is missing or
+the model file is absent, the layer switches itself off.
+
+**What it does and doesn't buy.** It resolves 7 of the 201 rows that reach it
+on this statement — plain first names (`raju`, `rupesh`) as transfers, plus one
+dubious `sweety` → FOOD. The rest are unresolvable from the text by any
+model: a college (no EDUCATION category), person-named shops, and bare
+`… traders` / `… enterprises`. Cross-validation shows 99% agreement with the
+curated layers when it clears 0.75, but that measures agreement with the rules,
+not correctness — there is still no hand-labelled ground truth.
 
 ## Categories
 
@@ -182,7 +222,8 @@ ClassifyResult(
     category='GROCERIES',
     confidence=0.90,
     source='RULE',                 # USER_OVERRIDE | EXACT_MERCHANT | RULE
-                                   # | FUZZY_MATCH | TXN_TYPE | FALLBACK
+                                   # | FUZZY_MATCH | TXN_TYPE | ML_MODEL
+                                   # | FALLBACK
     needs_review=False,
     txn_type='PAYMENT_TO_MERCHANT',
     normalized_merchant='new matruchaya daily and general store',
@@ -191,7 +232,7 @@ ClassifyResult(
 ```
 
 Confidences are ordered preferences, not calibrated probabilities:
-override 1.0 > exact 0.97 > rule 0.90 > fuzzy ≤0.94 > fallback ≤0.70.
+override 1.0 > exact 0.97 > rule 0.90 > fuzzy ≤0.94 > model ≤0.89 > fallback ≤0.70.
 
 ## Learning from corrections
 
@@ -246,6 +287,9 @@ phonepe_categorizer/
   merchants.py    stage 3 — exact directory
   rules.py        stage 4 — 361 ordered rules
   fuzzy.py        stage 5 — token-alignment matcher
+  ml.py           stage 6 — ONNX model runtime + featurizer
+  train.py        trains and exports the stage-6 model
+  models/         the shipped categorizer.onnx
   engine.py       the orchestrator (pure, no I/O)
   importer.py     PhonePe CSV → transactions, resilient to bad rows
   export.py       CSV in -> categorized CSV out
@@ -254,12 +298,12 @@ phonepe_categorizer/
   report.py       evaluation report
   cli.py          command line
   db/             optional SQLAlchemy persistence + correction loop
-tests/            190 tests
+tests/            226 tests
 ```
 
 ## Develop
 
 ```bash
-.venv/bin/python -m pytest        # 190 tests
+.venv/bin/python -m pytest        # 226 tests
 .venv/bin/python -m ruff check .
 ```
