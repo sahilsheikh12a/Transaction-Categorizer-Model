@@ -137,20 +137,20 @@ human can tell you that `CHETMANI DWARKAPRASAD SAHU` is a grocery shop.
 
 | Module | Lines | Role |
 |---|---:|---|
-| `categories.py` | 193 | 14 categories, definitions, source constants, legacy bridge |
+| `categories.py` | 198 | 14 categories, definitions, source constants, legacy bridge |
 | `normalize.py` | 162 | two normalizers — storage key and matching key |
-| `triage.py` | 131 | person-vs-business shape heuristics, 258 commercial tokens |
-| `txn_type.py` | 136 | stage 1 |
+| `triage.py` | 137 | person-vs-business shape heuristics, 258 commercial tokens |
+| `txn_type.py` | 140 | stage 1 |
 | `merchants.py` | 182 | stage 3, 101 built-in brands |
 | `rules.py` | 664 | stage 4, 479 ordered rules |
-| `fuzzy.py` | 184 | stage 5 |
+| `fuzzy.py` | 164 | stage 5 |
 | `ml.py` | 177 | stage 6 — featurizer + ONNX runtime, optional |
 | `semantic.py` | 220 | MiniLM embeddings and neighbour vote (hint only), fetch/index |
-| `train.py` | 332 | builds the dataset, trains, exports the ONNX model, rebuilds the MiniLM index |
+| `train.py` | 330 | builds the dataset, trains, exports the ONNX model, rebuilds the MiniLM index |
 | `engine.py` | 226 | the orchestrator |
 | `schema.py` | 70 | `ClassifyResult` |
 | `importer.py` | 361 | CSV → transactions, role-based, resilient |
-| `db/` | 553 | optional persistence + the correction loop |
+| `db/` | 549 | optional persistence + the correction loop |
 
 The engine depends on nothing but the pure modules and `ml.py`, which
 degrades to "no answer" when onnxruntime or the model file is missing.

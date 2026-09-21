@@ -59,8 +59,10 @@ re-runs the whole file so you can watch the correction propagate.
 
 Zero dependencies — it is `http.server` and one self-contained HTML file, no
 CDN and no build step. It binds to `127.0.0.1` only; this is financial data and
-there is no authentication, so do not expose it. `--no-db` gives a scratch
-session whose corrections are not saved.
+there is no authentication, so do not expose it. It also refuses requests
+that another web page in the same browser could forge: POSTs must use the
+endpoint's content type (JSON or CSV), and the Host header must be a loopback
+name. `--no-db` gives a scratch session whose corrections are not saved.
 
 ### CSV in, CSV out
 
@@ -117,6 +119,15 @@ automatically, so corrections you've made show up in the exported CSV.
 .venv/bin/python -m phonepe_categorizer review  --limit 20
 .venv/bin/python -m phonepe_categorizer correct "Smart Point NAGPUR U178" GROCERIES
 .venv/bin/python -m phonepe_categorizer reclassify
+
+# Retrain the n-gram model (and the MiniLM hint index) after corrections
+.venv/bin/python -m phonepe_categorizer train transactions2.csv
+.venv/bin/python -m phonepe_categorizer setup-minilm transactions2.csv    # once, ~90 MB
+
+# Measure accuracy on a statement the system has never seen
+.venv/bin/python -m phonepe_categorizer label-sheet test.csv -o reports/labels.csv
+#   ...fill in true_category, blind...
+.venv/bin/python -m phonepe_categorizer evaluate test.csv reports/labels.csv --train transactions2.csv
 ```
 
 As a library:
