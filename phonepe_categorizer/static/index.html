@@ -1,0 +1,395 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PhonePe Categorizer</title>
+<style>
+:root{
+  --bg:#f7f7f8; --panel:#fff; --ink:#16171a; --muted:#6b7280; --line:#e4e4e7;
+  --accent:#4f46e5; --warn:#b45309; --warn-bg:#fef3c7; --ok:#047857;
+  --radius:10px; --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme:dark){
+  :root{--bg:#0d0e11;--panel:#16181d;--ink:#e8e9ec;--muted:#9099a8;--line:#282b33;
+        --accent:#818cf8;--warn:#fbbf24;--warn-bg:#3a2f12;--ok:#34d399;}
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);
+  font:15px/1.5 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;}
+header{padding:22px 24px 0;max-width:1180px;margin:0 auto}
+h1{font-size:19px;margin:0 0 2px;letter-spacing:-.01em}
+.sub{color:var(--muted);font-size:13px;margin:0}
+main{max-width:1180px;margin:0 auto;padding:18px 24px 60px}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);
+  padding:18px;margin-bottom:18px}
+h2{font-size:13px;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);
+  margin:0 0 14px;font-weight:600}
+label{display:block;font-size:12px;color:var(--muted);margin-bottom:5px}
+input[type=text],select{width:100%;padding:9px 11px;border:1px solid var(--line);
+  border-radius:8px;background:var(--bg);color:var(--ink);font-size:14px;font-family:inherit}
+input[type=text]:focus,select:focus{outline:2px solid var(--accent);outline-offset:-1px}
+button{background:var(--accent);color:#fff;border:0;border-radius:8px;padding:9px 16px;
+  font-size:14px;font-weight:500;cursor:pointer;font-family:inherit}
+button:hover{filter:brightness(1.08)} button:disabled{opacity:.5;cursor:default}
+button.ghost{background:transparent;color:var(--accent);border:1px solid var(--line)}
+.row{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end}
+.row>*{flex:1;min-width:150px} .row>.narrow{flex:0 0 150px}
+.check{display:flex;align-items:center;gap:7px;font-size:14px;color:var(--ink);
+  padding-bottom:9px} .check input{width:16px;height:16px;accent-color:var(--accent)}
+/* result card */
+.result{margin-top:16px;border:1px solid var(--line);border-radius:var(--radius);overflow:hidden}
+.result .top{padding:14px 16px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;
+  border-bottom:1px solid var(--line)}
+.cat{font-size:19px;font-weight:600;letter-spacing:-.01em}
+.pill{font-size:11px;font-weight:600;padding:3px 9px;border-radius:999px;
+  border:1px solid var(--line);color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+.pill.review{background:var(--warn-bg);color:var(--warn);border-color:transparent}
+.pill.ok{color:var(--ok)}
+dl{margin:0;padding:14px 16px;display:grid;grid-template-columns:auto 1fr;gap:7px 18px;font-size:13px}
+dt{color:var(--muted)} dd{margin:0;font-family:var(--mono);font-size:12.5px;word-break:break-word}
+/* stats */
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px;margin-bottom:16px}
+.tile{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:11px 13px}
+.tile .n{font-size:21px;font-weight:600;letter-spacing:-.02em}
+.tile .k{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
+/* bars */
+.bars{display:grid;gap:5px;margin-bottom:16px}
+.bar{display:grid;grid-template-columns:170px 1fr 54px;gap:10px;align-items:center;font-size:12.5px}
+.bar .track{display:block;background:var(--bg);border-radius:4px;height:16px;
+  overflow:hidden;border:1px solid var(--line)}
+.bar .fill{display:block;height:100%;background:var(--accent);opacity:.8;border-radius:3px}
+.bar .v{text-align:right;color:var(--muted);font-family:var(--mono);font-size:12px}
+/* table */
+.tablewrap{overflow-x:auto;border:1px solid var(--line);border-radius:var(--radius)}
+table{border-collapse:collapse;width:100%;font-size:13px}
+th{text-align:left;padding:9px 11px;background:var(--bg);color:var(--muted);font-size:11px;
+  text-transform:uppercase;letter-spacing:.05em;position:sticky;top:0;white-space:nowrap;
+  border-bottom:1px solid var(--line)}
+td{padding:8px 11px;border-bottom:1px solid var(--line);white-space:nowrap}
+tr.flag td{background:var(--warn-bg)}
+td.wrap{white-space:normal;min-width:190px}
+td.num{text-align:right;font-family:var(--mono)}
+td .ev{color:var(--muted);font-family:var(--mono);font-size:11.5px}
+select.fix{padding:4px 7px;font-size:12px;border-radius:6px;width:auto;min-width:150px}
+.filters{display:flex;gap:9px;flex-wrap:wrap;align-items:center;margin-bottom:12px}
+.filters input[type=text]{flex:1;min-width:170px}
+.note{color:var(--muted);font-size:12.5px;margin:10px 0 0}
+.err{background:var(--warn-bg);color:var(--warn);padding:11px 13px;border-radius:8px;
+  font-size:13px;margin-top:12px}
+.drop{border:1.5px dashed var(--line);border-radius:var(--radius);padding:26px;text-align:center;
+  color:var(--muted);cursor:pointer;font-size:14px}
+.drop.over{border-color:var(--accent);color:var(--accent)}
+.hidden{display:none}
+</style>
+</head>
+<body>
+<header>
+  <h1>PhonePe Categorizer</h1>
+  <p class="sub">Deterministic · offline · <span id="stateline">loading…</span></p>
+</header>
+
+<main>
+  <!-- ── single string ─────────────────────────────────────────── -->
+  <section class="panel">
+    <h2>Classify one transaction</h2>
+    <div class="row">
+      <div style="flex:3">
+        <label for="q">Counterparty as it appears on the statement</label>
+        <input id="q" type="text" placeholder="Paid to NEW MATRUCHAYA DAILY AND GENERAL STORE"
+               autocomplete="off">
+      </div>
+      <div class="narrow">
+        <label for="dir">Direction</label>
+        <select id="dir">
+          <option value="Paid to">Paid to</option>
+          <option value="Received from">Received from</option>
+          <option value="Paid">Paid</option>
+          <option value="Bill paid">Bill paid</option>
+          <option value="Refund from">Refund from</option>
+          <option value="">(none)</option>
+        </select>
+      </div>
+      <div class="check"><input id="credit" type="checkbox"><label for="credit"
+        style="margin:0">Money in</label></div>
+      <div class="narrow" style="flex:0 0 auto"><button id="go">Classify</button></div>
+    </div>
+    <div class="note">Try: <code>Ritik Pandey</code> · <code>Maturchaya Kirana 2</code> ·
+      <code>******6258</code> · <code>Smart Point NAGPUR U178</code> · <code>Swiggy Order</code></div>
+    <div id="one"></div>
+  </section>
+
+  <!-- ── csv ───────────────────────────────────────────────────── -->
+  <section class="panel">
+    <h2>Categorize a statement</h2>
+    <div id="drop" class="drop">Drop a CSV here, or click to choose
+      <input id="file" type="file" accept=".csv,text/csv" class="hidden"></div>
+    <div id="uploadErr"></div>
+    <div id="results" class="hidden">
+      <div class="tiles" id="tiles"></div>
+      <div class="bars" id="bars"></div>
+      <div class="filters">
+        <input id="search" type="text" placeholder="Filter by merchant…" autocomplete="off">
+        <select id="fcat" class="fix"><option value="">All categories</option></select>
+        <select id="fsrc" class="fix"><option value="">All sources</option></select>
+        <label class="check" style="padding:0"><input id="fRev" type="checkbox"> Needs review only</label>
+        <button id="dl" class="ghost">Download full CSV</button>
+        <button id="dlm" class="ghost">Download merchants CSV</button>
+      </div>
+      <div class="tablewrap">
+        <table>
+          <thead><tr>
+            <th>Date</th><th>Counterparty</th><th>Direction</th><th style="text-align:right">Amount</th>
+            <th>Category</th><th>Conf</th><th>Source</th><th>Why</th><th style="min-width:170px">Correct to…</th>
+          </tr></thead>
+          <tbody id="tbody"></tbody>
+        </table>
+      </div>
+      <p class="note" id="shown"></p>
+    </div>
+  </section>
+</main>
+
+<script>
+const $ = s => document.querySelector(s);
+let CATS = [], ROWS = [];
+
+const api = async (path, opts) => {
+  const r = await fetch(path, opts);
+  const body = await r.json().catch(() => ({error: `HTTP ${r.status}`}));
+  if (!r.ok) throw new Error(body.error || `HTTP ${r.status}`);
+  return body;
+};
+
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c =>
+  ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const money = n => '₹' + Number(n).toLocaleString('en-IN',
+  {minimumFractionDigits:0, maximumFractionDigits:2});
+
+// ── boot ────────────────────────────────────────────────────────────
+(async () => {
+  const meta = await api('/api/categories');
+  CATS = meta.categories;
+  for (const sel of ['#fcat']) {
+    CATS.forEach(c => $(sel).add(new Option(c, c)));
+  }
+  meta.sources.forEach(s => $('#fsrc').add(new Option(s, s)));
+  refreshState();
+})();
+
+async function refreshState() {
+  try {
+    const s = await api('/api/state');
+    $('#stateline').textContent =
+      `${s.overrides} override${s.overrides === 1 ? '' : 's'}, ` +
+      `${s.learnedMerchants} learned merchant${s.learnedMerchants === 1 ? '' : 's'}` +
+      (s.db ? ` · ${s.db}` : ' · not persisted');
+  } catch { $('#stateline').textContent = 'state unavailable'; }
+}
+
+// ── single classify ─────────────────────────────────────────────────
+async function classifyOne() {
+  const text = $('#q').value.trim();
+  if (!text) return;
+  $('#go').disabled = true;
+  try {
+    const r = await api('/api/classify', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({text, direction: $('#dir').value, isCredit: $('#credit').checked}),
+    });
+    $('#one').innerHTML = `
+      <div class="result">
+        <div class="top">
+          <span class="cat">${esc(r.category)}</span>
+          <span class="pill">${(r.confidence).toFixed(2)}</span>
+          <span class="pill">${esc(r.source)}</span>
+          <span class="pill ${r.needsReview ? 'review' : 'ok'}">
+            ${r.needsReview ? 'needs review' : 'confident'}</span>
+        </div>
+        <dl>
+          <dt>transaction type</dt><dd>${esc(r.txnType)}</dd>
+          <dt>normalized</dt><dd>${esc(r.normalizedMerchant) || '<em>(empty)</em>'}</dd>
+          <dt>evidence</dt><dd>${esc(r.evidence)}</dd>
+        </dl>
+      </div>`;
+  } catch (e) {
+    $('#one').innerHTML = `<div class="err">${esc(e.message)}</div>`;
+  } finally { $('#go').disabled = false; }
+}
+$('#go').onclick = classifyOne;
+$('#q').addEventListener('keydown', e => { if (e.key === 'Enter') classifyOne(); });
+
+// ── upload ──────────────────────────────────────────────────────────
+const drop = $('#drop'), fileInput = $('#file');
+drop.onclick = () => fileInput.click();
+drop.ondragover = e => { e.preventDefault(); drop.classList.add('over'); };
+drop.ondragleave = () => drop.classList.remove('over');
+drop.ondrop = e => {
+  e.preventDefault(); drop.classList.remove('over');
+  if (e.dataTransfer.files[0]) upload(e.dataTransfer.files[0]);
+};
+fileInput.onchange = () => { if (fileInput.files[0]) upload(fileInput.files[0]); };
+
+let LAST_CSV = null;
+
+async function upload(file) {
+  drop.textContent = `Reading ${file.name}…`;
+  $('#uploadErr').innerHTML = '';
+  try {
+    LAST_CSV = await file.text();
+    const data = await classifyLoaded();
+    drop.textContent = `${file.name} — ${data.summary.classified} transactions. `
+      + `Drop another to replace.`;
+  } catch (e) {
+    LAST_CSV = null;
+    drop.textContent = 'Drop a CSV here, or click to choose';
+    $('#uploadErr').innerHTML = `<div class="err">${esc(e.message)}</div>`;
+  }
+}
+
+// Re-runs the loaded file through the server. Called on upload and again after
+// every correction, so a correction's effect shows up on every row it touches
+// rather than only the row that was edited.
+async function classifyLoaded() {
+  if (!LAST_CSV) return null;
+  const data = await api('/api/categorize', {
+    method: 'POST', headers: {'Content-Type': 'text/csv'}, body: LAST_CSV,
+  });
+  ROWS = data.rows;
+  render(data);
+  return data;
+}
+
+function render(data) {
+  const s = data.summary;
+  const pct = n => s.classified ? (100 * n / s.classified).toFixed(1) + '%' : '—';
+  $('#tiles').innerHTML = [
+    ['transactions', s.classified], ['auto-classified', s.classified - s.needsReview,
+      pct(s.classified - s.needsReview)],
+    ['needs review', s.needsReview, pct(s.needsReview)],
+    ['other', s.other, pct(s.other)],
+    ['unique merchants', s.uniqueMerchants], ['rows skipped', s.skipped],
+  ].map(([k, n, sub]) => `<div class="tile"><div class="n">${n}</div>
+      <div class="k">${k}${sub ? ' · ' + sub : ''}</div></div>`).join('');
+
+  const max = Math.max(...Object.values(data.byCategory), 1);
+  $('#bars').innerHTML = Object.entries(data.byCategory)
+    .sort((a, b) => b[1] - a[1])
+    .map(([c, n]) => `<div class="bar"><span>${esc(c)}</span>
+        <span class="track"><span class="fill" style="width:${100 * n / max}%"></span></span>
+        <span class="v">${n}</span></div>`).join('');
+
+  $('#results').classList.remove('hidden');
+  drawTable();
+}
+
+function visibleRows() {
+  const q = $('#search').value.trim().toLowerCase();
+  const cat = $('#fcat').value, src = $('#fsrc').value, rev = $('#fRev').checked;
+  return ROWS.filter(r =>
+    (!q || r.counterparty.toLowerCase().includes(q) ||
+           r.normalizedMerchant.includes(q)) &&
+    (!cat || r.category === cat) && (!src || r.source === src) &&
+    (!rev || r.needsReview));
+}
+
+function drawTable() {
+  const rows = visibleRows();
+  const shown = rows.slice(0, 400);
+  $('#tbody').innerHTML = shown.map((r, i) => `
+    <tr class="${r.needsReview ? 'flag' : ''}">
+      <td>${esc(r.date)}</td>
+      <td class="wrap">${esc(r.counterparty)}</td>
+      <td>${esc(r.direction)}</td>
+      <td class="num">${r.isCredit ? '+' : '−'}${money(r.amount)}</td>
+      <td>${esc(r.category)}</td>
+      <td class="num">${r.confidence.toFixed(2)}</td>
+      <td>${esc(r.source)}</td>
+      <td class="wrap"><span class="ev">${esc(r.evidence)}</span></td>
+      <td><select class="fix" data-m="${esc(r.counterparty)}">
+        <option value="">—</option>
+        ${CATS.map(c => `<option value="${c}"${c === r.category ? ' selected' : ''}>${c}</option>`).join('')}
+      </select></td>
+    </tr>`).join('');
+  $('#shown').textContent =
+    `Showing ${shown.length} of ${rows.length} matching (${ROWS.length} total)` +
+    (rows.length > shown.length ? ' — filter to narrow further' : '');
+
+  $('#tbody').querySelectorAll('select.fix').forEach(sel => {
+    sel.onchange = async () => {
+      const merchant = sel.dataset.m, category = sel.value;
+      if (!category) return;
+      sel.disabled = true;
+      try {
+        await api('/api/correct', {
+          method: 'POST', headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({merchant, category}),
+        });
+        // Re-run the whole file so the correction's effect is visible
+        // everywhere it applies, not just on the row that was edited.
+        await classifyLoaded();
+        refreshState();
+      } catch (e) {
+        $('#uploadErr').innerHTML = `<div class="err">${esc(e.message)}</div>`;
+      } finally { sel.disabled = false; }
+    };
+  });
+}
+
+['#search', '#fcat', '#fsrc', '#fRev'].forEach(s => {
+  $(s).addEventListener('input', drawTable);
+  $(s).addEventListener('change', drawTable);
+});
+
+// ── downloads ───────────────────────────────────────────────────────
+const csvCell = v => {
+  const s = String(v ?? '');
+  return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+};
+
+function saveCsv(name, text) {
+  const blob = new Blob([text], {type: 'text/csv'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+// Two columns, one row per unique merchant. The server derives this rather
+// than the page, because a merchant's category here is what it would be if you
+// PAID them — a shop that only ever appears as a refund in this statement must
+// not come out labelled INCOME.
+$('#dlm').onclick = async () => {
+  if (!LAST_CSV) return;
+  const btn = $('#dlm');
+  btn.disabled = true;
+  const label = btn.textContent;
+  btn.textContent = 'Building…';
+  try {
+    const {merchants} = await api('/api/merchants', {
+      method: 'POST', headers: {'Content-Type': 'text/csv'}, body: LAST_CSV,
+    });
+    saveCsv('merchants.csv', 'merchant,category\n' +
+      merchants.map(m => [m.merchant, m.category].map(csvCell).join(',')).join('\n'));
+  } catch (e) {
+    $('#uploadErr').innerHTML = `<div class="err">${esc(e.message)}</div>`;
+  } finally { btn.disabled = false; btn.textContent = label; }
+};
+
+$('#dl').onclick = () => {
+  const q = csvCell;
+  const head = ['date', 'counterparty', 'direction', 'amount', 'is_credit',
+                'category', 'category_confidence', 'category_source',
+                'category_needs_review', 'category_txn_type',
+                'category_normalized_merchant', 'category_evidence'];
+  const body = visibleRows().map(r => [
+    r.date, r.counterparty, r.direction, r.amount, r.isCredit ? 'yes' : 'no',
+    r.category, r.confidence.toFixed(2), r.source, r.needsReview ? 'yes' : 'no',
+    r.txnType, r.normalizedMerchant, r.evidence,
+  ].map(q).join(','));
+  saveCsv('categorized.csv', head.join(',') + '\n' + body.join('\n'));
+};
+</script>
+</body>
+</html>
