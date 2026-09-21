@@ -84,15 +84,25 @@ nothing in the string says so.
                                   └─────────┬──────────┘  or ambiguous)
                                             │ unsure: kept as a hint
                                   ┌─────────▼──────────┐
-                                  │ OTHER              │ stage 7
+                                  │ masked / mobile no │ stage 8 (part)
+                                  │ short name         │ flagged transfers
+                                  └─────────┬──────────┘
+                                            │ none of those
+                                  ┌─────────▼──────────┐
+                                  │ MiniLM neighbours  │ stage 7  semantic.py
+                                  │ always answers     │ flagged unless the
+                                  └─────────┬──────────┘ vote is clear
+                                            │ no text / not installed
+                                  ┌─────────▼──────────┐
+                                  │ OTHER              │ stage 8
                                   │ needs_review=True  │
                                   └────────────────────┘
 ```
 
 Implemented as one function, `engine.classify_core`, ~120 lines. No I/O and no
-database; learned state arrives as two plain dicts. The one piece of process
-state is the ONNX model, loaded once on first use and replaceable with
-`ml.set_default_model` (tests switch it off by default).
+database; learned state arrives as two plain dicts. The only process state is
+the two models, each loaded once on first use and replaceable with
+`set_default_model` (tests switch both off by default).
 
 ---
 
@@ -140,8 +150,9 @@ human can tell you that `CHETMANI DWARKAPRASAD SAHU` is a grocery shop.
 | `rules.py` | 591 | stage 4, 421 ordered rules |
 | `fuzzy.py` | 184 | stage 5 |
 | `ml.py` | 177 | stage 6 — featurizer + ONNX runtime, optional |
-| `train.py` | 306 | builds the dataset, trains, exports the ONNX model |
-| `engine.py` | 194 | the orchestrator |
+| `semantic.py` | 234 | stage 7 — MiniLM embeddings, neighbour vote, fetch/index |
+| `train.py` | 332 | builds the dataset, trains, exports the ONNX model, rebuilds the MiniLM index |
+| `engine.py` | 226 | the orchestrator |
 | `schema.py` | 70 | `ClassifyResult` |
 | `importer.py` | 361 | CSV → transactions, role-based, resilient |
 | `db/` | 553 | optional persistence + the correction loop |
@@ -268,6 +279,7 @@ Confidences are **ordered preferences, not calibrated probabilities**:
 | `FUZZY_MATCH` | ≤0.94 | looks like something known |
 | `TXN_TYPE` | 0.60–0.99 | decided by flow, not merchant |
 | `ML_MODEL` | 0.75–0.89 | the model's probability, capped below `RULE` |
+| `SEMANTIC` | 0.00–0.80 | MiniLM neighbour vote; 0.80 only when clear, else ≤0.70 and flagged |
 | `FALLBACK` | 0.00–0.70 | a guess or a refusal |
 
 Anything below 0.75 sets `needs_review`.
@@ -295,7 +307,8 @@ a garage was `INCOME`, because a refund came from it — and since the directory
 doubles as the fuzzy corpus, that error spread. The guard cut learned merchants
 from 497 to 178, all genuine, and made `reclassify` a no-op immediately after
 import instead of changing 260 categories. `ML_MODEL` is outside the guard for
-the same reason: a model's guess is not a fact about a merchant.
+the same reason, and so is `SEMANTIC`: a model's guess is not a fact about a
+merchant.
 
 `raw_counterparty` is **never** overwritten. Everything else is derived, so
 `reclassify` can always rebuild from the original text.
@@ -307,16 +320,18 @@ the same reason: a model's guess is not a fact about a merchant.
 | | |
 |---|---:|
 | Transactions | 2,005 |
-| Auto-classified | **1,807 — 90.1%** |
-| Flagged for review | 198 — 9.9% |
-| `OTHER` | 91 — 4.5% |
-| Speed | ~129 µs/txn |
+| Auto-classified | **1,811 — 90.3%** |
+| Flagged for review | 194 — 9.7% |
+| `OTHER` | 0 |
+| Speed | ~280 µs/txn average, ~3 ms on a MiniLM row |
 
 By deciding layer: `TXN_TYPE` 971 · `RULE` 634 · `EXACT_MERCHANT` 196 ·
-`FALLBACK` 194 · `ML_MODEL` 7 · `FUZZY_MATCH` 3.
+`FALLBACK` 104 · `SEMANTIC` 90 · `ML_MODEL` 7 · `FUZZY_MATCH` 3.
 
-**90.1% is coverage, not accuracy.** It means 1,807 transactions got a confident
-answer — not that 1,807 are correct. There is no labelled ground truth for this
+**90.3% is coverage, not accuracy.** It means 1,811 transactions got a confident
+answer, not that 1,811 are correct. `OTHER` at 0 doesn't mean every row is
+categorized correctly. It means every row carries a best guess, and 194 of
+those guesses are still marked for review. There is no labelled ground truth for this
 statement, so precision is unmeasured. The report's suspicious-classification
 sections exist precisely because of that gap.
 
@@ -333,7 +348,7 @@ Known limits:
 
 ---
 
-## 11. The model layer, and why it is last
+## 11. The model layers, and why they are last
 
 ~90% of these transactions are decided by an exact merchant name or a single
 keyword. That is a lookup table's job, and the table does it reproducibly and
@@ -388,3 +403,23 @@ text-only model fixes those.
 the classifier got wrong so frequently-corrected *rules* can be fixed directly.
 Retrain after a batch of corrections; measure against those corrections, not
 against the rules.
+
+### Stage 7: MiniLM, the last resort
+
+Added so the system never gives up with `OTHER`. all-MiniLM-L6-v2 (ONNX,
+pinned to revision `1110a24`, sha256-verified, ~90 MB, fetched by
+`setup-minilm` and kept out of git) embeds the merchant; the 5 nearest of the
+same labelled merchants the n-gram model trains on vote, weighted by cosine
+similarity. It runs only on rows about to become `OTHER`. Masked handles,
+mobile numbers and short names already get a flagged `PERSONAL_TRANSFER`
+first.
+
+It always answers. It clears review only when the winner has ≥ 80% of the
+vote **and** the nearest neighbour is at ≥ 0.50 similarity. Leave-one-out on
+statement merchants: 89% agreement overall, 98% at ≥ 80% vote share. The same
+caveat applies as for stage 6: that measures agreement with the rules. On the
+91 rows that used to be `OTHER` it clears 3, all correct, and flags 87 guesses
+that are mostly wrong (college → TRANSPORT, a grocery → HEALTH). A sentence
+model knows English meaning, not that `smart point nagpur` is a kirana. The
+guards match stage 6: no `PERSONAL_TRANSFER` for a commercial name, and
+ambiguous phrases are always flagged.

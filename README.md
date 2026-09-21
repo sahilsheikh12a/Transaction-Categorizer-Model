@@ -1,9 +1,10 @@
 # PhonePe Transaction Categorizer
 
 Deterministic, offline categorization of PhonePe statement transactions into a
-small set of day-to-day expense categories. No LLM and no network: five
-hand-curated layers, plus a small ONNX model that only sees what they could not
-place. The same input always produces the same output.
+small set of day-to-day expense categories. No LLM and no network at run
+time: five hand-curated layers, then two ONNX models that only see what those
+could not place: a small n-gram classifier, then MiniLM as the last resort. The
+same input always produces the same output.
 
 Built and evaluated against a real 2,009-row statement (`transactions2.csv`,
 Jul 2024 – Apr 2026).
@@ -13,12 +14,12 @@ Jul 2024 – Apr 2026).
 | | |
 |---|---|
 | Transactions parsed | **2,005** of 2,009 (2 duplicates collapsed, 2 blank rows skipped) |
-| Classified automatically | **1,807 — 90.1%** (7 of them by the model) |
-| Flagged for review | 198 — 9.9% |
-| Fell through to `OTHER` | 91 — 4.5% |
+| Classified automatically | **1,811 — 90.3%** (7 by the n-gram model, 3 by MiniLM) |
+| Flagged for review | 194 — 9.7% (every one still carries a category) |
+| Fell through to `OTHER` | **0** (was 91 before the model layers) |
 | Unique merchants | 607 |
-| Speed | ~129 µs per transaction |
-| Tests | 243 passing |
+| Speed | ~280 µs per transaction on average; MiniLM rows ~3 ms each |
+| Tests | 261 passing |
 
 ## Quick start
 
@@ -146,7 +147,8 @@ raw counterparty
   → exact merchant lookup        merchants.py    ~110 brands + learned merchants
   → keyword & brand rules        rules.py        421 ordered patterns
   → fuzzy merchant matching      fuzzy.py        typos, truncation, branch suffixes
-  → ONNX model                   ml.py           only below the review threshold
+  → ONNX n-gram model            ml.py           only below the review threshold
+  → MiniLM neighbours            semantic.py     instead of OTHER, always answers
   → OTHER + needs_review         engine.py       never guesses
 ```
 
@@ -165,7 +167,9 @@ a transfer to a friend.
 User overrides sit above both. Small Indian vendors routinely collect on
 personal UPI accounts, and only the user can resolve that.
 
-## The model layer
+## The model layers
+
+### Stage 6: n-gram model
 
 Stage 6 is a logistic-regression classifier over hashed character n-grams,
 shipped as `phonepe_categorizer/models/categorizer.onnx` (~900 KB) and run with
@@ -192,7 +196,8 @@ corrections:
 .venv/bin/python -m phonepe_categorizer train transactions2.csv
 ```
 
-Set `PHONEPE_CATEGORIZER_ML=off` to run without it. If onnxruntime is missing or
+`train` also rebuilds the MiniLM index below. Set
+`PHONEPE_CATEGORIZER_ML=off` to run without the n-gram model. If onnxruntime is missing or
 the model file is absent, the layer switches itself off.
 
 **What it does and doesn't buy.** It resolves 7 of the 201 rows that reach it
@@ -202,6 +207,41 @@ model: a college (no EDUCATION category), person-named shops, and bare
 `… traders` / `… enterprises`. Cross-validation shows 99% agreement with the
 curated layers when it clears 0.75, but that measures agreement with the rules,
 not correctness — there is still no hand-labelled ground truth.
+
+### Stage 7: MiniLM, instead of `OTHER`
+
+Rows that every earlier layer missed would otherwise end as `OTHER`. Stage 7
+embeds the merchant with
+[all-MiniLM-L6-v2](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2)
+(ONNX, pinned revision, checksum-verified) and lets the 5 most similar known
+merchants vote. **It always names a category.** Only blank counterparties can
+still be `OTHER`.
+
+An answer isn't always a right answer. It clears review only when at least 80%
+of the vote agrees **and** the nearest merchant has similarity ≥ 0.50.
+Otherwise it's a labelled guess that stays in the queue, and the evidence
+shows why:
+
+```
+SHOPPING  0.80        minilm: nearest 'textiles' (0.64), 82% of vote
+TRANSPORT 0.20 ⚠      minilm: nearest 'health institute' (0.35), 58% of vote
+```
+
+On this statement it answers 90 rows. 3 are clear and correct (`akhtar
+textile` → SHOPPING, `sonu chat` → FOOD, a person's full name → transfer). The
+other 87 are flagged guesses, and most are wrong: the college lands on
+TRANSPORT, `smart point` (a grocery) on HEALTH. The text alone doesn't say
+what these merchants are. Your corrections do, and `train` feeds them into
+the index.
+
+Setup is one command, and `start.sh` runs it on first launch:
+
+```bash
+.venv/bin/python -m phonepe_categorizer setup-minilm transactions2.csv   # ~90 MB, once
+```
+
+Set `PHONEPE_CATEGORIZER_MINILM=off` to skip the layer. Without the files it
+switches itself off.
 
 ## Categories
 
@@ -223,7 +263,7 @@ ClassifyResult(
     confidence=0.90,
     source='RULE',                 # USER_OVERRIDE | EXACT_MERCHANT | RULE
                                    # | FUZZY_MATCH | TXN_TYPE | ML_MODEL
-                                   # | FALLBACK
+                                   # | SEMANTIC | FALLBACK
     needs_review=False,
     txn_type='PAYMENT_TO_MERCHANT',
     normalized_merchant='new matruchaya daily and general store',
@@ -232,7 +272,8 @@ ClassifyResult(
 ```
 
 Confidences are ordered preferences, not calibrated probabilities:
-override 1.0 > exact 0.97 > rule 0.90 > fuzzy ≤0.94 > model ≤0.89 > fallback ≤0.70.
+override 1.0 > exact 0.97 > rule 0.90 > fuzzy ≤0.94 > model ≤0.89 > MiniLM ≤0.80
+> fallback ≤0.70.
 
 ## Learning from corrections
 
@@ -288,8 +329,9 @@ phonepe_categorizer/
   rules.py        stage 4 — 421 ordered rules
   fuzzy.py        stage 5 — token-alignment matcher
   ml.py           stage 6 — ONNX model runtime + featurizer
+  semantic.py     stage 7 — MiniLM embeddings, neighbour vote, setup
   train.py        trains and exports the stage-6 model
-  models/         the shipped categorizer.onnx
+  models/         the shipped categorizer.onnx; minilm/ is fetched, not in git
   engine.py       the orchestrator (pure, no I/O)
   importer.py     PhonePe CSV → transactions, resilient to bad rows
   export.py       CSV in -> categorized CSV out
@@ -298,12 +340,12 @@ phonepe_categorizer/
   report.py       evaluation report
   cli.py          command line
   db/             optional SQLAlchemy persistence + correction loop
-tests/            243 tests
+tests/            261 tests
 ```
 
 ## Develop
 
 ```bash
-.venv/bin/python -m pytest        # 243 tests
+.venv/bin/python -m pytest        # 261 tests
 .venv/bin/python -m ruff check .
 ```
