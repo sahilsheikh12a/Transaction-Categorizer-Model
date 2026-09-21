@@ -7,5 +7,5 @@ __pycache__/
 phonepe_categorizer/models/minilm/
 
 # Personal financial data: the statement and everything derived from it
-/transactions*.csv
+/*.csv
 reports/
