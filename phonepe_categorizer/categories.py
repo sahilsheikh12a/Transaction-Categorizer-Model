@@ -93,6 +93,7 @@ SRC_EXACT_MERCHANT: Final = "EXACT_MERCHANT"
 SRC_RULE: Final = "RULE"
 SRC_FUZZY_MATCH: Final = "FUZZY_MATCH"
 SRC_TXN_TYPE: Final = "TXN_TYPE"
+SRC_ML_MODEL: Final = "ML_MODEL"
 SRC_FALLBACK: Final = "FALLBACK"
 
 SOURCES: Final[tuple[str, ...]] = (
@@ -101,6 +102,7 @@ SOURCES: Final[tuple[str, ...]] = (
     SRC_RULE,
     SRC_FUZZY_MATCH,
     SRC_TXN_TYPE,
+    SRC_ML_MODEL,
     SRC_FALLBACK,
 )
 
@@ -180,6 +182,6 @@ __all__ = [
     "FINANCE", "PERSONAL_TRANSFER", "INCOME", "OTHER",
     "ALL", "VALID", "DEFINITIONS",
     "SRC_USER_OVERRIDE", "SRC_EXACT_MERCHANT", "SRC_RULE", "SRC_FUZZY_MATCH",
-    "SRC_TXN_TYPE", "SRC_FALLBACK", "SOURCES",
+    "SRC_TXN_TYPE", "SRC_ML_MODEL", "SRC_FALLBACK", "SOURCES",
     "to_legacy", "coerce", "is_valid",
 ]

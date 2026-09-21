@@ -493,9 +493,8 @@ def lookup(signal: str | None) -> tuple[str, float, str] | None:
     # corporate words would only add noise.
     needle_full = canon(signal)
 
-    for phrase in AMBIGUOUS_PHRASES:
-        if phrase in needle or phrase in needle_full:
-            return None  # force fallthrough to OTHER + needs_review
+    if _ambiguous(needle, needle_full):
+        return None  # force fallthrough to OTHER + needs_review
 
     tokens = set(needle.split())
     for rule in RULES:
@@ -507,8 +506,23 @@ def lookup(signal: str | None) -> tuple[str, float, str] | None:
     return None
 
 
+def _ambiguous(needle: str, needle_full: str) -> bool:
+    return any(p in needle or p in needle_full for p in AMBIGUOUS_PHRASES)
+
+
+def is_ambiguous(signal: str | None) -> bool:
+    """Does the string contain a phrase the rules deliberately abstain on?
+
+    Later layers use this to abstain too, rather than guess where the rule
+    table already decided a guess is wrong.
+    """
+    if not signal:
+        return False
+    return _ambiguous(normalize_merchant(signal), canon(signal))
+
+
 def rule_count() -> int:
     return len(RULES)
 
 
-__all__ = ["RULES", "Rule", "lookup", "rule_count", "RULE_CONFIDENCE", "AMBIGUOUS_PHRASES"]
+__all__ = ["RULES", "Rule", "lookup", "is_ambiguous", "rule_count", "RULE_CONFIDENCE", "AMBIGUOUS_PHRASES"]

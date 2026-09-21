@@ -1,12 +1,13 @@
 [project]
 name = "phonepe-categorizer"
 version = "1.0.0"
-description = "Deterministic, offline transaction categorization for PhonePe statements"
+description = "Offline transaction categorization for PhonePe statements"
 requires-python = ">=3.11"
-dependencies = ["sqlalchemy>=2.0.40"]
+dependencies = ["sqlalchemy>=2.0.40", "numpy>=2.0", "onnxruntime>=1.24"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0.0", "ruff>=0.6.0"]
+train = ["scikit-learn>=1.5", "skl2onnx>=1.18", "onnx>=1.17"]
 
 [project.scripts]
 phonepe-categorizer = "phonepe_categorizer.cli:main"
@@ -17,3 +18,6 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 include = ["phonepe_categorizer*"]
+
+[tool.setuptools.package-data]
+phonepe_categorizer = ["models/*.onnx"]

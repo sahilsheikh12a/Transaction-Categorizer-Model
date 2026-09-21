@@ -7,7 +7,8 @@
       -> exact merchant lookup           (merchants.py)     Stage 3
       -> keyword / rule classification   (rules.py)         Stage 4
       -> fuzzy merchant matching         (fuzzy.py)         Stage 5
-      -> fallback OTHER + needs_review                      Stage 6
+      -> ONNX model, below-threshold only (ml.py)           Stage 6
+      -> fallback OTHER + needs_review                      Stage 7
 
 Two design decisions worth stating explicitly, because they are the ones a
 reader will want to argue with:
@@ -21,9 +22,11 @@ reader will want to argue with:
    though the string is a perfect person name. Small Indian vendors routinely
    collect on personal UPI accounts, and only the user can resolve that.
 
-No LLM, no network, no model weights. V1 is fully deterministic and offline:
-the same input always yields the same output, which is what makes the review
-queue and the evaluation report trustworthy.
+No LLM and no network. Stages 1–5 are hand-curated; stage 6 is a small
+ONNX classifier that only sees strings those stages could not place, and only
+clears the review flag when it is at least `REVIEW_THRESHOLD` sure. Inference
+is deterministic too, so the same input still always yields the same output,
+which is what makes the review queue and the evaluation report trustworthy.
 
 `classify_core` is the whole engine and takes plain dicts for the two pieces of
 learned state (user overrides, known merchants). Persistence lives in
@@ -37,6 +40,7 @@ import re
 from . import categories as C
 from . import fuzzy as _fuzzy
 from . import merchants as _merchants
+from . import ml as _ml
 from . import rules as _rules
 from . import triage as _triage
 from . import txn_type as _txn_type
@@ -144,7 +148,27 @@ def classify_core(
         category, conf, key = fz
         return _r(category, C.SRC_FUZZY_MATCH, conf, evidence=f"~ '{key}'")
 
-    # ── Stage 6 — fallback ──────────────────────────────────────────────
+    # ── Stage 6 — ONNX model ────────────────────────────────────────────
+    # Everything below would land under REVIEW_THRESHOLD, so this is where
+    # the model gets its say. It abstains on masked handles (there is no
+    # merchant text to read) and on phrases the rules deliberately refuse to
+    # guess. A confident answer is taken; an unsure one is kept as a hint in
+    # the evidence of whatever the fallback decides.
+    hint = ""
+    if not _triage.detect_opaque(raw) and not _rules.is_ambiguous(raw):
+        pred = _ml.predict(norm)
+        if pred is not None:
+            confident = pred.probability >= REVIEW_THRESHOLD
+            # A commercial keyword rules out a person, however the name reads.
+            if pred.category == C.PERSONAL_TRANSFER and _triage.has_commercial_keyword(raw):
+                confident = False
+            if confident:
+                return _r(pred.category, C.SRC_ML_MODEL,
+                          min(pred.probability, _ml.MAX_CONFIDENCE),
+                          evidence=f"model: p={pred.probability:.2f}")
+            hint = f"; model suggests {pred.category} (p={pred.probability:.2f})"
+
+    # ── Stage 7 — fallback ──────────────────────────────────────────────
     # A masked account number is a UPI handle, i.e. almost certainly a person.
     # Useful enough to surface, uncertain enough to always review.
     if _triage.detect_opaque(raw):
@@ -161,9 +185,9 @@ def classify_core(
         and not _triage.has_commercial_keyword(raw)
     ):
         return _r(C.PERSONAL_TRANSFER, C.SRC_FALLBACK, 0.55, review=True,
-                  evidence="short non-commercial name, likely a person")
+                  evidence="short non-commercial name, likely a person" + hint)
 
-    return _r(C.OTHER, C.SRC_FALLBACK, 0.0, review=True, evidence="no layer matched")
+    return _r(C.OTHER, C.SRC_FALLBACK, 0.0, review=True, evidence="no layer matched" + hint)
 
 
 
