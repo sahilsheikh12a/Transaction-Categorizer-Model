@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 from . import triage
-from .normalize import normalize_merchant
+from .normalize import canon, normalize_merchant
 
 
 class TxnType(StrEnum):
@@ -114,7 +114,11 @@ def detect(
     # the same string is what keeps the per-row and batch paths in agreement.
     shape = norm or raw
 
-    if triage.has_commercial_keyword(shape):
+    # Normalization strips corporate forms ("Private Limited", "Pte Ltd"),
+    # which is right for matching but deletes the one word that proves a
+    # business: "CINEPOLIS INDIA PRIVATE LIMITED" normalizes to a perfect
+    # two-token name. Check the unstripped text too, as the rules layer does.
+    if triage.has_commercial_keyword(shape) or triage.has_commercial_keyword(canon(raw)):
         return TypeResult(TxnType.PAYMENT_TO_MERCHANT, 0.95, "commercial keyword")
 
     if triage.looks_like_person(shape):
