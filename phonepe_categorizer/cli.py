@@ -12,6 +12,8 @@
     python -m phonepe_categorizer reclassify
     python -m phonepe_categorizer train     transactions2.csv
     python -m phonepe_categorizer setup-minilm transactions2.csv
+    python -m phonepe_categorizer label-sheet test.csv -o labels.csv
+    python -m phonepe_categorizer evaluate  test.csv labels.csv --train transactions2.csv
 
 `report` and `classify` are stateless. Everything else reads and writes the
 SQLite file given by --db, which is where overrides and learned merchants live.
@@ -212,6 +214,39 @@ def cmd_setup_minilm(args) -> int:
     return 0
 
 
+def cmd_label_sheet(args) -> int:
+    from .evaluate import label_sheet
+
+    out = Path(args.output or "reports/labels.csv")
+    n = label_sheet(Path(args.csv), out)
+    print(f"{n} merchants to label -> {out}\n"
+          f"fill in true_category with one of:\n  {', '.join(C.ALL)}\n"
+          f"(rows are sorted by amount; blank rows are left out of the evaluation)")
+    return 0
+
+
+def cmd_evaluate(args) -> int:
+    from .evaluate import LabelError, as_text, evaluate, write_json
+
+    learned = overrides = None
+    if args.db:
+        with open_session(_url(args.db), create=False) as s:
+            repo = CategorizerRepository(s)
+            learned, overrides = repo.learned_merchants(), repo.overrides()
+    try:
+        report = evaluate(Path(args.csv), Path(args.labels),
+                          train_csv=Path(args.train) if args.train else None,
+                          learned=learned, overrides=overrides)
+    except LabelError as exc:
+        print(f"error: {exc}")
+        return 2
+    print(as_text(report))
+    if args.json:
+        write_json(report, Path(args.json))
+        print(f"\nfull report -> {args.json}")
+    return 0
+
+
 def cmd_serve(args) -> int:
     from .web import serve
     return serve(host=args.host, port=args.port, db=None if args.no_db else args.db)
@@ -306,6 +341,21 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--db", default=DEFAULT_DB,
                    help="also index this DB's corrections and merchants if it exists")
     p.set_defaults(func=cmd_setup_minilm)
+
+    p = sub.add_parser("label-sheet",
+                       help="write a blind one-line-per-merchant sheet to label a test set")
+    p.add_argument("csv", help="the test statement")
+    p.add_argument("-o", "--output", help="defaults to reports/labels.csv")
+    p.set_defaults(func=cmd_label_sheet)
+
+    p = sub.add_parser("evaluate", help="score the pipeline against a labelled test set")
+    p.add_argument("csv", help="the test statement")
+    p.add_argument("labels", help="the filled-in label sheet")
+    p.add_argument("--train", help="training statement, to split seen vs new merchants")
+    p.add_argument("--db", help="include this DB's learned merchants and overrides "
+                                "(default: none, i.e. the shipped system alone)")
+    p.add_argument("--json", help="also write the full report as JSON")
+    p.set_defaults(func=cmd_evaluate)
 
     p = sub.add_parser("serve", help="run the local browser UI")
     p.add_argument("--host", default="127.0.0.1")
