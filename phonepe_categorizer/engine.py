@@ -48,7 +48,7 @@ from . import rules as _rules
 from . import semantic as _semantic
 from . import triage as _triage
 from . import txn_type as _txn_type
-from .normalize import normalize_merchant
+from .normalize import canon, normalize_merchant
 from .schema import ClassifyResult
 from .txn_type import TxnType
 
@@ -113,13 +113,21 @@ def classify_core(
         # every friend's repayment as income would wreck the budget view.
         if _INCOME_MARKER_RE.search(raw):
             return _r(C.INCOME, C.SRC_TXN_TYPE, 0.95, evidence="income keyword")
-        if _triage.has_commercial_keyword(raw):
+        if _triage.has_commercial_keyword(canon(raw)):
             return _r(C.INCOME, C.SRC_TXN_TYPE, 0.90, evidence="credit from a business")
         if _merchants.lookup(raw, learned) or _rules.lookup(raw):
             return _r(C.INCOME, C.SRC_TXN_TYPE, 0.90, evidence="credit from a known merchant")
-        if _triage.looks_like_person(raw) or _triage.detect_opaque(raw):
+        # The person test reads the normalized name: raw text carries emoji
+        # and separators ("Suraj 🤓") that fail an alphabetic-token check.
+        if _triage.looks_like_person(norm or raw) or _triage.detect_opaque(raw):
             return _r(C.PERSONAL_TRANSFER, C.SRC_TXN_TYPE, 0.90,
                       evidence="credit from an individual")
+        # One or two plain words with no business signal ("Suraj", "Ammi") is
+        # almost always a person; incoming UPI money is overwhelmingly P2P.
+        tokens = norm.split()
+        if 1 <= len(tokens) <= 2 and all(t.isalpha() for t in tokens):
+            return _r(C.PERSONAL_TRANSFER, C.SRC_TXN_TYPE, 0.60, review=True,
+                      evidence="credit from a short plain name, likely a person")
         # Indeterminate counterparty on an incoming row.
         return _r(C.INCOME, C.SRC_TXN_TYPE, 0.60, review=True,
                   evidence="credit from an unrecognized counterparty")
