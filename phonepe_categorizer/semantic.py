@@ -1,14 +1,21 @@
-"""MiniLM semantic neighbours: a hint for rows that end as OTHER.
+"""Stage 7 — MiniLM semantic neighbours, the last merchant layer.
 
 Everything that reaches this layer has been missed by every curated layer and
 by the stage-6 n-gram model. It embeds the merchant with all-MiniLM-L6-v2
-(ONNX), lets the 5 most similar known merchants vote, and the engine writes
-the winner into the evidence as a suggestion. The row stays OTHER and
-flagged; the reviewer decides.
+(ONNX) and lets the 5 most similar known SHOPS vote. A clear vote sets the
+category; anything less stays OTHER with the suggestion in the evidence.
 
-It used to set the category itself. Evaluated against a hand-labelled
-statement it got 1 of 40 rows right and cost ~10 points of accuracy, almost
-all by replacing a correct OTHER with a wrong guess, so it was demoted.
+Two things make it safe enough to answer at all, both learned the hard way.
+An earlier version indexed every training merchant and answered on any vote:
+against a hand-labelled statement it got 1 of 40 rows right and cost ~10
+points of accuracy.
+
+  * The index holds shops only. Most training merchants are people, and
+    their names pulled every suggestion toward PERSONAL_TRANSFER. Person
+    payments never reach this layer anyway — stage 1 settles them.
+  * It answers only on a clear vote (`ACCEPT_SHARE`, `MIN_SIMILARITY`).
+    Below that the row stays OTHER, because "I don't know" is a correct
+    answer the reviewer can act on and a wrong category is not.
 
 Files (not in git — `python -m phonepe_categorizer setup-minilm` fetches and
 builds them, ~90 MB):
@@ -44,8 +51,19 @@ FILES = {
 }
 INDEX_FILE = "index.npz"
 
-K = 5                 # neighbours that vote
-MAX_TOKENS = 64       # merchant strings are short; this is generous
+K = 5                  # neighbours that vote
+MAX_TOKENS = 64        # merchant strings are short; this is generous
+ACCEPT_SHARE = 0.75    # winner's share of the vote needed to set the category
+MIN_SIMILARITY = 0.50  # ...and how close the nearest shop must be
+
+# Reported when a vote is clear. Below the n-gram model (0.89) because this is
+# similarity to other shops, not a pattern learned from the rules; above
+# REVIEW_THRESHOLD so a clear answer does not come back as a question.
+CONFIDENT = 0.78
+
+# Never indexed: person payments are settled by stage 1, so a person in the
+# index can only mislead a merchant that reaches stage 7.
+EXCLUDE_LABELS = frozenset({"PERSONAL_TRANSFER", "INCOME", "OTHER"})
 
 ENV_SWITCH = "PHONEPE_CATEGORIZER_MINILM"
 
@@ -57,6 +75,11 @@ class Neighbours:
     similarity: float     # cosine similarity of the nearest neighbour
     nearest: str          # the nearest neighbour's text
     ranked: tuple[tuple[str, float], ...]  # every voted category, best first
+
+    @property
+    def clear(self) -> bool:
+        """Sure enough to set the category rather than only suggest one."""
+        return self.share >= ACCEPT_SHARE and self.similarity >= MIN_SIMILARITY
 
 
 class Embedder:
@@ -159,13 +182,22 @@ def is_installed(model_dir: Path = MODEL_DIR) -> bool:
 
 
 def build_index(texts: list[str], labels: list[str], model_dir: Path = MODEL_DIR) -> int:
-    """Embed the labelled merchants and write the neighbour index."""
+    """Embed the labelled shops and write the neighbour index.
+
+    Merchants in EXCLUDE_LABELS are left out — see the module docstring.
+    """
     import numpy as np
 
-    vectors = Embedder(model_dir).embed(texts)
+    pairs = [(t, lab) for t, lab in zip(texts, labels, strict=True)
+             if lab not in EXCLUDE_LABELS]
+    if not pairs:
+        raise ValueError("no indexable shops: every example is an excluded label")
+    kept_texts = [t for t, _ in pairs]
+    vectors = Embedder(model_dir).embed(kept_texts)
     np.savez_compressed(model_dir / INDEX_FILE, vectors=vectors,
-                        labels=np.array(labels), texts=np.array(texts))
-    return len(texts)
+                        labels=np.array([lab for _, lab in pairs]),
+                        texts=np.array(kept_texts))
+    return len(pairs)
 
 
 # ── process-wide default ─────────────────────────────────────────────────
@@ -216,5 +248,5 @@ def neighbours(text: str) -> Neighbours | None:
 __all__ = [
     "Embedder", "SemanticModel", "Neighbours", "neighbours", "fetch", "build_index",
     "is_installed", "default_model", "set_default_model", "reset_default_model",
-    "disabled", "MODEL_DIR",
+    "disabled", "MODEL_DIR", "CONFIDENT", "ACCEPT_SHARE", "MIN_SIMILARITY",
 ]

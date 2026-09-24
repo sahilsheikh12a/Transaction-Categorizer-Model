@@ -8,8 +8,8 @@
       -> keyword / rule classification   (rules.py)         Stage 4
       -> fuzzy merchant matching         (fuzzy.py)         Stage 5
       -> ONNX model, below-threshold only (ml.py)           Stage 6
-      -> fallback, flagged                                  Stage 7
-         (OTHER carries a MiniLM hint, semantic.py)
+      -> MiniLM nearest shops             (semantic.py)     Stage 7
+      -> fallback OTHER + needs_review                      Stage 8
 
 Two design decisions worth stating explicitly, because they are the ones a
 reader will want to argue with:
@@ -25,9 +25,9 @@ reader will want to argue with:
 
 No LLM and no network. Stages 1–5 are hand-curated; stage 6 is a small
 ONNX classifier that only sees strings those stages could not place, and only
-clears the review flag when it is at least `REVIEW_THRESHOLD` sure. A row
-that still ends as OTHER gets a MiniLM suggestion in its evidence for the
-reviewer; MiniLM never sets the category. Inference
+clears the review flag when it is at least `REVIEW_THRESHOLD` sure. Stage 7
+compares what is left against the known shops with MiniLM: a clear vote sets
+the category, an unclear one only leaves a suggestion in the evidence. Inference
 is deterministic too, so the same input still always yields the same output,
 which is what makes the review queue and the evaluation report trustworthy.
 
@@ -184,7 +184,8 @@ def classify_core(
                           evidence=f"model: p={pred.probability:.2f}")
             hint = f"; model suggests {pred.category} (p={pred.probability:.2f})"
 
-    # ── Stage 7 — fallback ──────────────────────────────────────────────
+    # ── Stage 8, first half — cheap flagged answers ─────────────────────
+    # These name a category already, so MiniLM is not asked about them.
     # A masked account number is a UPI handle, i.e. almost certainly a person.
     # Useful enough to surface, uncertain enough to always review.
     if _triage.detect_opaque(raw):
@@ -206,19 +207,20 @@ def classify_core(
         return _r(C.PERSONAL_TRANSFER, C.SRC_FALLBACK, 0.55, review=True,
                   evidence="short non-commercial name, likely a person" + hint)
 
-    # Nothing could place it. MiniLM's nearest neighbours go into the evidence
-    # as a suggestion for the reviewer. It never sets the category: evaluated
-    # against a hand-labelled statement it replaced correct OTHERs with wrong
-    # guesses far more often than it found the right category.
+    # ── Stage 7 — MiniLM nearest shops ──────────────────────────────────
+    # The last layer that can name a merchant: how close is this string to the
+    # shops already known? A clear vote answers; an unclear one only leaves a
+    # suggestion behind, because a wrong category is worse than OTHER.
     nb = _semantic.neighbours(norm)
     if nb is not None:
-        suggestion = nb.category
-        if suggestion == C.PERSONAL_TRANSFER and _triage.has_commercial_keyword(canon(raw)):
-            others = [c for c, _ in nb.ranked if c != C.PERSONAL_TRANSFER]
-            suggestion = others[0] if others else suggestion
-        hint += (f"; minilm suggests {suggestion} (nearest '{nb.nearest}' "
-                 f"{nb.similarity:.2f}, {nb.share:.0%} of vote)")
+        evidence = (f"nearest shop '{nb.nearest}' ({nb.similarity:.2f}), "
+                    f"{nb.share:.0%} of the vote")
+        if nb.clear and not _rules.is_ambiguous(raw):
+            return _r(nb.category, C.SRC_SEMANTIC, _semantic.CONFIDENT,
+                      evidence=f"minilm: {evidence}")
+        hint += f"; minilm suggests {nb.category} ({evidence})"
 
+    # ── Stage 8, second half — nothing left to try ──────────────────────
     return _r(C.OTHER, C.SRC_FALLBACK, 0.0, review=True, evidence="no layer matched" + hint)
 
 

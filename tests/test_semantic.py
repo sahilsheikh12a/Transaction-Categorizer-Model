@@ -1,4 +1,4 @@
-"""MiniLM neighbours: a suggestion in the evidence of rows that end as OTHER.
+"""Stage 7 — MiniLM nearest shops: decides on a clear vote, suggests otherwise.
 
 Contract tests use a stub so they do not need the 90 MB model; the
 `real_minilm` tests run only when `setup-minilm` has been done.
@@ -30,25 +30,77 @@ def _paid(merchant: str, **kw):
 UNKNOWN = "Zzq Unrecognizable Enterprises Holdings"   # would be OTHER
 
 
-class TestHintOnly:
-    """MiniLM suggests; it never decides. The row stays OTHER and flagged."""
+class TestClearVoteDecides:
+    def test_clear_vote_sets_the_category(self):
+        semantic.set_default_model(_Stub([(C.GROCERIES, 0.9), (C.HEALTH, 0.1)],
+                                         similarity=0.6))
+        r = _paid(UNKNOWN)
+        assert r.category == C.GROCERIES
+        assert r.source == C.SRC_SEMANTIC
+        assert r.confidence == semantic.CONFIDENT
+        assert r.needs_review is False
+        assert "nearest shop" in r.evidence
 
-    def test_even_a_unanimous_vote_is_only_a_hint(self):
-        semantic.set_default_model(_Stub([(C.GROCERIES, 1.0)], similarity=0.95))
+    def test_it_ranks_below_the_n_gram_model(self):
+        assert semantic.CONFIDENT < 0.89
+
+    def test_an_ambiguous_phrase_is_still_refused(self):
+        # "internet cafe" is a phrase the rules deliberately abstain on.
+        semantic.set_default_model(_Stub([(C.FOOD_AND_DINING, 1.0)], similarity=0.9))
+        r = _paid("Akshay Internet Cafe")
+        assert r.category == C.OTHER
+        assert r.needs_review is True
+
+
+class TestUnclearVoteOnlySuggests:
+    """A wrong category is worse than OTHER, so an unsure vote stays a hint."""
+
+    def test_split_vote(self):
+        semantic.set_default_model(_Stub([(C.HEALTH, 0.5), (C.GROCERIES, 0.5)],
+                                         similarity=0.9))
         r = _paid(UNKNOWN)
         assert r.category == C.OTHER
         assert r.source == C.SRC_FALLBACK
         assert r.needs_review is True
-        assert "minilm suggests GROCERIES" in r.evidence
+        assert "minilm suggests HEALTH" in r.evidence
 
-    def test_evidence_names_the_nearest_merchant(self):
-        semantic.set_default_model(_Stub([(C.SHOPPING, 1.0)], nearest="textiles"))
-        assert "nearest 'textiles'" in _paid(UNKNOWN).evidence
+    def test_distant_nearest_shop(self):
+        semantic.set_default_model(_Stub([(C.HEALTH, 1.0)], similarity=0.3))
+        r = _paid(UNKNOWN)
+        assert r.category == C.OTHER
+        assert "minilm suggests HEALTH" in r.evidence
 
-    def test_commercial_name_is_never_suggested_as_a_person(self):
-        semantic.set_default_model(
-            _Stub([(C.PERSONAL_TRANSFER, 0.9), (C.GROCERIES, 0.1)]))
-        assert "minilm suggests GROCERIES" in _paid("Bharat Traders").evidence
+    def test_evidence_names_the_nearest_shop(self):
+        semantic.set_default_model(_Stub([(C.SHOPPING, 0.5)], nearest="textiles"))
+        assert "nearest shop 'textiles'" in _paid(UNKNOWN).evidence
+
+
+class TestIndexHoldsShopsOnly:
+    """People are settled by stage 1; in the index they only mislead."""
+
+    def test_person_and_direction_labels_are_left_out(self, tmp_path, monkeypatch):
+        recorded = {}
+        monkeypatch.setattr(semantic, "Embedder",
+                            lambda model_dir=None: type("E", (), {
+                                "embed": lambda self, texts: _fake_vectors(texts, recorded)})())
+        n = semantic.build_index(
+            ["kirana store", "ritik pandey", "acme ltd", "salary"],
+            [C.GROCERIES, C.PERSONAL_TRANSFER, C.SHOPPING, C.INCOME],
+            tmp_path)
+        assert n == 2
+        assert recorded["texts"] == ["kirana store", "acme ltd"]
+
+    def test_an_index_with_no_shops_is_an_error(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(semantic, "Embedder", lambda model_dir=None: None)
+        with pytest.raises(ValueError, match="no indexable shops"):
+            semantic.build_index(["ritik pandey"], [C.PERSONAL_TRANSFER], tmp_path)
+
+
+def _fake_vectors(texts, recorded):
+    import numpy as np
+
+    recorded["texts"] = list(texts)
+    return np.zeros((len(texts), 384), dtype="float32")
 
 
 class TestNeverAsked:
@@ -123,7 +175,10 @@ class TestRealModel:
         assert v.shape == (2, 384)
         assert np.allclose(np.linalg.norm(v, axis=1), 1.0, atol=1e-5)
 
-    def test_an_unknown_merchant_gets_a_suggestion(self, real_minilm):
+    def test_an_unknown_merchant_gets_an_answer_or_a_suggestion(self, real_minilm):
         r = _paid("Zzq Unrecognizable Enterprises Holdings")
-        assert r.category == C.OTHER
-        assert "minilm suggests" in r.evidence
+        assert r.source in (C.SRC_SEMANTIC, C.SRC_FALLBACK)
+        assert r.source == C.SRC_SEMANTIC or "minilm suggests" in r.evidence
+
+    def test_the_shipped_index_holds_no_people(self, real_minilm):
+        assert not (set(real_minilm.labels) & semantic.EXCLUDE_LABELS)
