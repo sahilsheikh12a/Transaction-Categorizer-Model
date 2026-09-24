@@ -3,7 +3,7 @@
 Deterministic, offline categorization of PhonePe statement transactions into a
 small set of day-to-day expense categories. No LLM and no network at run
 time: five hand-curated layers, then two ONNX models that only see what those
-could not place: a small n-gram classifier, then MiniLM as a reviewer's hint. The
+could not place: a small n-gram classifier, then MiniLM against the known shops. The
 same input always produces the same output.
 
 Built and evaluated against a real 2,009-row statement (`transactions2.csv`,
@@ -14,11 +14,11 @@ Jul 2024 – Apr 2026).
 | | |
 |---|---|
 | Transactions parsed | **2,005** of 2,009 (2 duplicates collapsed, 2 blank rows skipped) |
-| Classified automatically | **1,848 — 92.2%** (3 by the n-gram model) |
-| Flagged for review | 157 — 7.8% |
-| Fell through to `OTHER` | 47 — 2.3%, each with a MiniLM suggestion in the evidence |
+| Classified automatically | **1,851 — 92.3%** (3 by the n-gram model, 3 by MiniLM) |
+| Flagged for review | 154 — 7.7% |
+| Fell through to `OTHER` | 44 — 2.2%, each with a MiniLM suggestion in the evidence |
 | Unique merchants | 607 |
-| Speed | ~150 µs per transaction on average; rows ending as OTHER ~3 ms (MiniLM hint) |
+| Speed | ~150 µs per transaction on average; rows that reach MiniLM ~3 ms |
 | Tests | 308 passing |
 
 ## Quick start
@@ -120,7 +120,7 @@ automatically, so corrections you've made show up in the exported CSV.
 .venv/bin/python -m phonepe_categorizer correct "Smart Point NAGPUR U178" GROCERIES
 .venv/bin/python -m phonepe_categorizer reclassify
 
-# Retrain the n-gram model (and the MiniLM hint index) after corrections
+# Retrain the n-gram model (and the MiniLM shop index) after corrections
 .venv/bin/python -m phonepe_categorizer train transactions2.csv
 .venv/bin/python -m phonepe_categorizer setup-minilm transactions2.csv    # once, ~90 MB
 
@@ -159,7 +159,8 @@ raw counterparty
   → keyword & brand rules        rules.py        479 ordered patterns
   → fuzzy merchant matching      fuzzy.py        typos, truncation, branch suffixes
   → ONNX n-gram model            ml.py           only below the review threshold
-  → OTHER + needs_review         engine.py       with a MiniLM suggestion (semantic.py)
+  → MiniLM nearest shops         semantic.py     answers on a clear vote
+  → OTHER + needs_review         engine.py       carrying MiniLM's suggestion
 ```
 
 Two ordering decisions carry most of the accuracy:
@@ -206,7 +207,7 @@ corrections:
 .venv/bin/python -m phonepe_categorizer train transactions2.csv
 ```
 
-`train` also rebuilds the MiniLM index below. Set
+`train` also rebuilds the MiniLM shop index below. Set
 `PHONEPE_CATEGORIZER_ML=off` to run without the n-gram model. If onnxruntime is missing or
 the model file is absent, the layer switches itself off.
 
@@ -217,22 +218,34 @@ and bare `… traders` / `… enterprises`. Cross-validation shows 99% agreement
 curated layers when it clears 0.75, but that measures agreement with the rules,
 not correctness — there is still no hand-labelled ground truth.
 
-### MiniLM: a hint for the reviewer
+### Stage 7: MiniLM against the known shops
 
-A row that nothing above can place ends as `OTHER`, flagged. Before it does,
+Whatever no curated layer and no n-gram guess could place is compared, by
+meaning rather than spelling, against every shop the system already knows:
 [all-MiniLM-L6-v2](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2)
-(ONNX, pinned revision, checksum-verified) finds the 5 most similar known
-merchants, and their vote goes into the evidence as a suggestion. **It never
-sets the category.**
+(ONNX, pinned revision, checksum-verified) embeds the name and the 5 nearest
+shops vote.
+
+**A clear vote sets the category** (`source=SEMANTIC`, confidence 0.78, below
+the n-gram model). Clear means the winner takes ≥ 75% of the vote **and** the
+nearest shop is at ≥ 0.50 similarity. Anything less stays `OTHER` and flagged,
+with the suggestion in the evidence:
 
 ```
-OTHER  0.00 ⚠  no layer matched; minilm suggests GROCERIES (nearest 'nanda pradeep labhane' 0.47, 81% of vote)
+FOOD_AND_DINING 0.78    minilm: nearest shop 'pav bhaji' (0.53), 81% of the vote
+OTHER           0.00 ⚠  no layer matched; minilm suggests SHOPPING (nearest shop
+                        'sumit dry cleaning and laundry' (0.51), 40% of the vote)
 ```
 
-It used to replace `OTHER` with its own answer. Measured against a
-hand-labelled statement it got 1 of 40 of those rows right and cost about 10
-points of accuracy, almost entirely by overwriting a correct `OTHER`, so it
-was demoted to a hint.
+**Two rules keep it honest**, both learned by measuring. An earlier version
+indexed every training merchant and answered on any vote: it got 1 of 40 rows
+right and cost ~10 points of accuracy.
+
+1. **The index holds shops only.** Most training merchants are people, and
+   their names pulled every suggestion toward "transfer". Payments to people
+   never reach this layer anyway.
+2. **It only answers on a clear vote.** "I don't know" is an answer a reviewer
+   can act on; a wrong category is not.
 
 Setup is one command, and `start.sh` runs it on first launch:
 
@@ -325,7 +338,7 @@ phonepe_categorizer/
   rules.py        stage 4 — 479 ordered rules
   fuzzy.py        stage 5 — token-alignment matcher
   ml.py           stage 6 — ONNX model runtime + featurizer
-  semantic.py     MiniLM embeddings and neighbour vote (hint only), setup
+  semantic.py     stage 7 — MiniLM embeddings, nearest-shop vote, setup
   train.py        trains and exports the stage-6 model
   models/         the shipped categorizer.onnx; minilm/ is fetched, not in git
   engine.py       the orchestrator (pure, no I/O)

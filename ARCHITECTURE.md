@@ -89,8 +89,13 @@ nothing in the string says so.
                                   └─────────┬──────────┘
                                             │ none of those
                                   ┌─────────▼──────────┐
-                                  │ OTHER              │ + MiniLM suggestion
-                                  │ needs_review=True  │   in the evidence
+                                  │ MiniLM vs the      │ stage 7  semantic.py
+                                  │ known shops        │ clear vote → answer
+                                  └─────────┬──────────┘
+                                            │ unclear
+                                  ┌─────────▼──────────┐
+                                  │ OTHER              │ stage 8, carrying
+                                  │ needs_review=True  │ MiniLM's suggestion
                                   └────────────────────┘
 ```
 
@@ -145,7 +150,7 @@ human can tell you that `CHETMANI DWARKAPRASAD SAHU` is a grocery shop.
 | `rules.py` | 664 | stage 4, 479 ordered rules |
 | `fuzzy.py` | 164 | stage 5 |
 | `ml.py` | 177 | stage 6 — featurizer + ONNX runtime, optional |
-| `semantic.py` | 220 | MiniLM embeddings and neighbour vote (hint only), fetch/index |
+| `semantic.py` | 252 | stage 7 — MiniLM embeddings, nearest-shop vote, fetch/index |
 | `train.py` | 330 | builds the dataset, trains, exports the ONNX model, rebuilds the MiniLM index |
 | `engine.py` | 226 | the orchestrator |
 | `schema.py` | 70 | `ClassifyResult` |
@@ -280,6 +285,7 @@ Confidences are **ordered preferences, not calibrated probabilities**:
 | `FUZZY_MATCH` | ≤0.94 | looks like something known |
 | `TXN_TYPE` | 0.60–0.99 | decided by flow, not merchant |
 | `ML_MODEL` | 0.75–0.89 | the model's probability, capped below `RULE` |
+| `SEMANTIC` | 0.78 | a clear MiniLM vote against the known shops |
 | `FALLBACK` | 0.00–0.70 | a guess or a refusal |
 
 Anything below 0.75 sets `needs_review`.
@@ -319,16 +325,16 @@ the same reason: a model's guess is not a fact about a merchant.
 | | |
 |---|---:|
 | Transactions | 2,005 |
-| Auto-classified | **1,848 — 92.2%** |
-| Flagged for review | 157 — 7.8% |
-| `OTHER` | 47 — 2.3% |
+| Auto-classified | **1,851 — 92.3%** |
+| Flagged for review | 154 — 7.7% |
+| `OTHER` | 44 — 2.2% |
 | Speed | ~150 µs/txn average, ~3 ms on a row that ends as OTHER |
 
 By deciding layer: `TXN_TYPE` 967 · `RULE` 683 · `EXACT_MERCHANT` 196 ·
 `FALLBACK` 153 · `ML_MODEL` 3 · `FUZZY_MATCH` 3.
 
-**92.2% is coverage, not accuracy.** It means 1,848 transactions got a confident
-answer, not that 1,848 are correct.
+**92.3% is coverage, not accuracy.** It means 1,851 transactions got a confident
+answer, not that 1,851 are correct.
 
 **Accuracy on a held-out statement.** Jun–Sep 2026 (363 rows, 69 of 111
 merchants never seen in training), hand-labelled blind, scored with
@@ -406,17 +412,29 @@ the classifier got wrong so frequently-corrected *rules* can be fixed directly.
 Retrain after a batch of corrections; measure against those corrections, not
 against the rules.
 
-### MiniLM: from last resort to hint
+### Stage 7: MiniLM against the known shops
 
-It was added so the system would never give up with `OTHER`: all-MiniLM-L6-v2
-(ONNX, pinned to revision `1110a24`, sha256-verified, ~90 MB, fetched by
-`setup-minilm` and kept out of git) embeds the merchant, and the 5 nearest of
-the same labelled merchants the n-gram model trains on vote, weighted by
-cosine similarity.
+all-MiniLM-L6-v2 (ONNX, pinned to revision `1110a24`, sha256-verified, ~90 MB,
+fetched by `setup-minilm` and kept out of git) embeds the merchant, and the 5
+nearest **shops** vote, weighted by cosine similarity. It runs only on rows
+about to become `OTHER`; masked handles, mobile numbers and short names are
+already flagged transfers by then.
 
-Evaluated against the hand-labelled Jun–Sep 2026 statement, it got 1 of the
-40 rows it decided right and cost about 10 points of accuracy, nearly all by
-replacing a correct `OTHER` (e.g. `Google Asia Pacific`) with a wrong guess.
-It is now a hint: rows that end as `OTHER` stay `OTHER` and flagged, with
-its suggestion in the evidence for the reviewer. Its guard still applies:
-never suggest `PERSONAL_TRANSFER` for a commercial name.
+It answers only on a clear vote — winner ≥ `ACCEPT_SHARE` (0.75) of the vote
+and nearest shop ≥ `MIN_SIMILARITY` (0.50) — at confidence 0.78, below the
+n-gram model. Otherwise the row stays `OTHER` and the suggestion goes into the
+evidence.
+
+**Both rules came from measurement, not taste.** The first version indexed
+every training merchant and answered on any vote: on the hand-labelled Jun–Sep
+statement it got 1 of 40 rows right and cost ~10 points of accuracy, nearly all
+by overwriting a correct `OTHER`. Removing people from the index was the fix
+that mattered: most training merchants are people, and their names dragged the
+vote toward `PERSONAL_TRANSFER` — with them gone, the one genuinely correct
+answer in that set rose from 62% to 81% of the vote while the wrong ones fell
+to 36–47%, which is what makes a threshold possible at all. Payments to people
+never reach stage 7, so nothing is lost by excluding them.
+
+On that statement it now answers 1 row and is right; on the training statement
+it answers 3. That is a small, honest contribution, and the layer's own
+sub-threshold guesses remain visible in the review queue.
